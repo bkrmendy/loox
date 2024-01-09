@@ -2,9 +2,9 @@ use std::fmt::Display;
 
 use anyhow::bail;
 
-use crate::scan::{Token, TokenType, TokenLiteral};
+use crate::scan::{Token, TokenLiteral, TokenType};
 
-
+#[derive(Debug)]
 pub enum Literal {
     Number(f64),
     String(String),
@@ -25,6 +25,7 @@ impl Display for Literal {
     }
 }
 
+#[derive(Debug)]
 pub enum UnaryOp {
     Minus,
     Bang,
@@ -39,6 +40,7 @@ impl Display for UnaryOp {
     }
 }
 
+#[derive(Debug)]
 pub enum BinaryOp {
     Equals,
     NEquals,
@@ -73,6 +75,7 @@ impl Display for BinaryOp {
     }
 }
 
+#[derive(Debug)]
 pub enum Expression {
     // `(` + expression + `)`
     Grouping(Box<Expression>),

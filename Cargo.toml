@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
+
+[dev-dependencies]
+insta = { version = "1.34.0", features = ["yaml"] }
