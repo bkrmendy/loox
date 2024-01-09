@@ -35,8 +35,15 @@ fn run_prompt() -> anyhow::Result<()> {
 }
 
 // TODO
+
 // use nom for scanning (for the line number + offset)
 // add the goodness from https://eyalkalderon.com/blog/nom-error-recovery/
+
+// parse/eval variable declarations
+// parse/eval functions
+// parse/eval ifs
+// parse/eval fors, whiles
+// parse/eval scopes
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();

@@ -248,6 +248,6 @@ fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
 pub fn parse(tokens: &[Token]) -> anyhow::Result<Expression> {
     match parse_expression(tokens) {
         None => bail!("Cannot parse expression"),
-        Some((expr, rest)) => Ok(expr),
+        Some((expr, _)) => Ok(expr),
     }
 }
