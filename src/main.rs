@@ -65,98 +65,64 @@ fn main() -> anyhow::Result<()> {
 mod tests {
     use crate::run;
 
+    fn run_expr_expect_ok(source: &str) -> String {
+        let result = run(source).expect("expected to be OK");
+        format!("{result}")
+    }
+
     #[test]
     fn test_add_expression() {
         let src = "1 + 2";
-        let result = run(src);
-        insta::assert_debug_snapshot!(result, @r###"
-        Ok(
-            Literal(
-                Number(
-                    3.0,
-                ),
-            ),
-        )
-        "###);
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""3""###);
     }
 
     #[test]
     fn test_precedences() {
         let src = "1 + 2 * 4";
-        let result = run(src);
-        insta::assert_debug_snapshot!(result, @r###"
-        Ok(
-            Literal(
-                Number(
-                    9.0,
-                ),
-            ),
-        )
-        "###);
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""9""###);
     }
 
     #[test]
     fn test_boolean() {
         let src = "true and false";
-        let result = run(src);
-        insta::assert_debug_snapshot!(result, @r###"
-        Ok(
-            Literal(
-                False,
-            ),
-        )
-        "###);
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
     #[test]
     fn test_boolean_with_grouping() {
         let src = "(true and false) or (false or true)";
-        let result = run(src);
-        insta::assert_debug_snapshot!(result, @r###"
-        Ok(
-            Literal(
-                True,
-            ),
-        )
-        "###);
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 
     #[test]
     fn test_boolean_with_grouping_with_eq() {
         let src = "(true and false) == (false or true)";
-        let result = run(src);
-        insta::assert_debug_snapshot!(result, @r###"
-        Ok(
-            Literal(
-                False,
-            ),
-        )
-        "###);
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
     #[test]
     fn test_number_eq() {
         let src = "5 == 3";
-        let result = run(src);
-        insta::assert_debug_snapshot!(result, @r###"
-        Ok(
-            Literal(
-                False,
-            ),
-        )
-        "###);
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
     #[test]
     fn test_number_gt() {
         let src = "5 > 3";
-        let result = run(src);
-        insta::assert_debug_snapshot!(result, @r###"
-        Ok(
-            Literal(
-                True,
-            ),
-        )
-        "###);
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""true""###);
+    }
+
+    #[test]
+    fn test_number_gte() {
+        let src = "111 <= 111";
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 }
