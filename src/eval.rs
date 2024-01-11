@@ -105,5 +105,6 @@ pub fn eval(expression: Expression) -> anyhow::Result<Expression> {
             let right_evaled = eval(*right)?;
             eval_binary_op(op, left_evaled, right_evaled)
         }
+        Expression::Error(err) => bail!(err),
     }
 }

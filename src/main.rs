@@ -1,6 +1,5 @@
 use std::io::Write;
 
-use anyhow::Ok;
 use parse::Expression;
 
 mod eval;
@@ -29,20 +28,25 @@ fn run_prompt() -> anyhow::Result<()> {
         if buffer.is_empty() {
             return Ok(());
         }
-        let result = run(&buffer)?;
-        println!("< {result}");
+        let result = run(&buffer);
+        match result {
+            Ok(res) => println!("<| {res}"),
+            Err(err) => println!("<! {err}"),
+        }
     }
 }
 
 // TODO
 
-// use nom for scanning (for the line number + offset)
 // add the goodness from https://eyalkalderon.com/blog/nom-error-recovery/
-
 // parse/eval variable declarations
-// parse/eval functions
+// parse/eval functions (incl. persistent map for env
+
+// use nom for scanning (for the line number + offset)
 // parse/eval ifs
 // parse/eval fors, whiles
+
+// parse/eval objects
 // parse/eval scopes
 
 fn main() -> anyhow::Result<()> {
@@ -70,6 +74,11 @@ mod tests {
         format!("{result}")
     }
 
+    fn run_expr_expect_err(source: &str) -> String {
+        let result = run(source).unwrap_err();
+        format!("{result}")
+    }
+
     #[test]
     fn test_add_expression() {
         let src = "1 + 2";
@@ -78,10 +87,38 @@ mod tests {
     }
 
     #[test]
+    fn test_incomplete_input() {
+        let src = "1 +";
+        let result = run_expr_expect_err(src);
+        insta::assert_debug_snapshot!(result, @r###""Expected operand""###);
+    }
+
+    #[test]
     fn test_precedences() {
         let src = "1 + 2 * 4";
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""9""###);
+    }
+
+    #[test]
+    fn test_add_unary() {
+        let src = "1 + -2";
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""-1""###);
+    }
+
+    #[test]
+    fn test_precedences_3() {
+        let src = "1 + 2 * 4 + 1";
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""10""###);
+    }
+
+    #[test]
+    fn test_precedences_long() {
+        let src = "1 + 1 + 2 * 4 + 5 * 6 + 7 * 2 * 2";
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""68""###);
     }
 
     #[test]

@@ -85,6 +85,7 @@ pub enum Expression {
     Literal(Literal),
     // expression + binary op + expression
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
+    Error(String),
 }
 
 impl Display for Expression {
@@ -94,6 +95,7 @@ impl Display for Expression {
             Expression::Unary(op, e) => write!(f, "{op}{e}"),
             Expression::Literal(literal) => write!(f, "{literal}"),
             Expression::Binary(op, left, right) => write!(f, "({op} {left} {right})"),
+            Expression::Error(e) => write!(f, "[{e}]"),
         }
     }
 }
@@ -153,6 +155,7 @@ fn parse_grouping(tokens: &[Token]) -> Option<(Expression, &[Token])> {
             ..
         } => {
             let (expr, rest) = parse_expression(&tokens[1..])?;
+            // TODO: signal the missing error here
             let (_, rest) = expect_token(rest, TokenType::RightParen);
             Some((Expression::Grouping(Box::new(expr)), rest))
         }
@@ -218,24 +221,55 @@ fn precedence(op: &BinaryOp) -> u8 {
     }
 }
 
-fn parse_binary(tokens: &[Token], current_prec: u8) -> Option<(Expression, &[Token])> {
-    let (mut expr, mut rest) = parse_literal(tokens)
+fn parse_binary_expr_operand(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+    parse_literal(tokens)
         .or(parse_grouping(tokens))
-        .or(parse_unary_expression(tokens))?;
+        .or(parse_unary_expression(tokens))
+}
+
+fn parse_binary_with_recovery(tokens: &[Token], current_prec: u8) -> (Expression, &[Token]) {
+    let next = parse_binary_expr_operand(tokens);
+
+    if next.is_none() {
+        return (Expression::Error(String::from("Expected operand")), tokens);
+    }
+
+    let (mut expr, mut rest) = next.unwrap();
 
     loop {
-        if let Some((op, rest_after_op)) = parse_binary_op(rest) {
-            let prec = precedence(&op);
-            if prec < current_prec {
-                return Some((expr, rest));
-            }
-            let (rhs, rest_after_rhs) = parse_binary(rest_after_op, prec)?;
-            expr = Expression::Binary(op, Box::new(expr), Box::new(rhs));
-            rest = rest_after_rhs;
-        } else {
-            return Some((expr, rest));
+        let maybe_op = parse_binary_op(rest);
+        if maybe_op.is_none() {
+            return (expr, rest);
         }
+
+        let (op, rest_after_op) = maybe_op.unwrap();
+        let prec = precedence(&op);
+        if prec < current_prec {
+            return (expr, rest);
+        }
+        let maybe_next_op = parse_binary_contd(rest_after_op, prec);
+        if maybe_next_op.is_none() {
+            return (Expression::Error(String::from("Expected operand")), tokens);
+        }
+        let (rhs, rest_after_rhs) = maybe_next_op.unwrap();
+        expr = Expression::Binary(op, Box::new(expr), Box::new(rhs));
+        rest = rest_after_rhs;
     }
+}
+
+fn parse_binary_contd(tokens: &[Token], current_prec: u8) -> Option<(Expression, &[Token])> {
+    let (expr, rest) = parse_binary_expr_operand(tokens)?;
+    let maybe_op = parse_binary_op(rest);
+    if maybe_op.is_none() {
+        return Some((expr, rest));
+    }
+    Some(parse_binary_with_recovery(tokens, current_prec))
+}
+
+fn parse_binary(tokens: &[Token], current_prec: u8) -> Option<(Expression, &[Token])> {
+    let (_, rest) = parse_binary_expr_operand(tokens)?;
+    let _ = parse_binary_op(rest)?;
+    Some(parse_binary_with_recovery(tokens, current_prec))
 }
 
 fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
