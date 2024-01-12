@@ -1,13 +1,12 @@
 use std::fmt::Display;
 
-use anyhow::bail;
-
 use crate::scan::{Token, TokenLiteral, TokenType};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Number(f64),
     String(String),
+    Identifier(String),
     True,
     False,
     Nil,
@@ -18,6 +17,7 @@ impl Display for Literal {
         match self {
             Literal::Number(number) => write!(f, "{number}"),
             Literal::String(string) => write!(f, "{string}"),
+            Literal::Identifier(name) => write!(f, "{name}"),
             Literal::True => write!(f, "true"),
             Literal::False => write!(f, "false"),
             Literal::Nil => write!(f, "nil"),
@@ -25,7 +25,7 @@ impl Display for Literal {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UnaryOp {
     Minus,
     Bang,
@@ -40,7 +40,7 @@ impl Display for UnaryOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BinaryOp {
     Equals,
     NEquals,
@@ -75,7 +75,7 @@ impl Display for BinaryOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression {
     // `(` + expression + `)`
     Grouping(Box<Expression>),
@@ -85,6 +85,8 @@ pub enum Expression {
     Literal(Literal),
     // expression + binary op + expression
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
+    // `var` name `=` expression `;`
+    Variable(String, Box<Expression>),
     Error(String),
 }
 
@@ -95,17 +97,18 @@ impl Display for Expression {
             Expression::Unary(op, e) => write!(f, "{op}{e}"),
             Expression::Literal(literal) => write!(f, "{literal}"),
             Expression::Binary(op, left, right) => write!(f, "({op} {left} {right})"),
+            Expression::Variable(name, value) => write!(f, "var {name} = {value}"),
             Expression::Error(e) => write!(f, "[{e}]"),
         }
     }
 }
 
-fn expect_token(tokens: &[Token], token_type: TokenType) -> (Option<TokenType>, &[Token]) {
+fn expect_maybe_token(tokens: &[Token], token_type: TokenType) -> (Option<Token>, &[Token]) {
     match tokens.get(0) {
         None => (None, tokens),
         Some(token) => {
             if token.token_type == token_type {
-                (Some(token_type), &tokens[1..])
+                (Some(token.clone()), &tokens[1..])
             } else {
                 (None, tokens)
             }
@@ -113,33 +116,51 @@ fn expect_token(tokens: &[Token], token_type: TokenType) -> (Option<TokenType>, 
     }
 }
 
+fn expect_token(tokens: &[Token], token_type: TokenType) -> Option<(Token, &[Token])> {
+    let token = tokens.get(0)?;
+    if token.token_type == token_type {
+        Some((token.clone(), &tokens[1..]))
+    } else {
+        None
+    }
+}
+
 fn parse_literal(tokens: &[Token]) -> Option<(Expression, &[Token])> {
-    match tokens.get(0) {
-        Some(Token {
+    let next_token = tokens.get(0)?;
+    match next_token {
+        Token {
             token_type: TokenType::Number,
             literal: TokenLiteral::NumberLiteral(number),
             ..
-        }) => Some((Expression::Literal(Literal::Number(*number)), &tokens[1..])),
-        Some(Token {
+        } => Some((Expression::Literal(Literal::Number(*number)), &tokens[1..])),
+        Token {
             token_type: TokenType::String,
             lexeme,
             ..
-        }) => Some((
+        } => Some((
             Expression::Literal(Literal::String(lexeme.clone())),
             &tokens[1..],
         )),
-        Some(Token {
+        Token {
             token_type: TokenType::True,
             ..
-        }) => Some((Expression::Literal(Literal::True), &tokens[1..])),
-        Some(Token {
+        } => Some((Expression::Literal(Literal::True), &tokens[1..])),
+        Token {
             token_type: TokenType::False,
             ..
-        }) => Some((Expression::Literal(Literal::False), &tokens[1..])),
-        Some(Token {
+        } => Some((Expression::Literal(Literal::False), &tokens[1..])),
+        Token {
             token_type: TokenType::Nil,
             ..
-        }) => Some((Expression::Literal(Literal::Nil), &tokens[1..])),
+        } => Some((Expression::Literal(Literal::Nil), &tokens[1..])),
+        Token {
+            token_type: TokenType::Identifier,
+            lexeme,
+            ..
+        } => Some((
+            Expression::Literal(Literal::Identifier(lexeme.clone())),
+            &tokens[1..],
+        )),
         _ => None,
     }
 }
@@ -156,7 +177,7 @@ fn parse_grouping(tokens: &[Token]) -> Option<(Expression, &[Token])> {
         } => {
             let (expr, rest) = parse_expression(&tokens[1..])?;
             // TODO: signal the missing error here
-            let (_, rest) = expect_token(rest, TokenType::RightParen);
+            let (_, rest) = expect_maybe_token(rest, TokenType::RightParen);
             Some((Expression::Grouping(Box::new(expr)), rest))
         }
         _ => None,
@@ -249,7 +270,7 @@ fn parse_binary_with_recovery(tokens: &[Token], current_prec: u8) -> (Expression
         }
         let maybe_next_op = parse_binary_contd(rest_after_op, prec);
         if maybe_next_op.is_none() {
-            return (Expression::Error(String::from("Expected operand")), tokens);
+            return (Expression::Error(String::from("Expected operand")), rest);
         }
         let (rhs, rest_after_rhs) = maybe_next_op.unwrap();
         expr = Expression::Binary(op, Box::new(expr), Box::new(rhs));
@@ -277,11 +298,48 @@ fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
         .or(parse_unary_expression(tokens))
         .or(parse_grouping(tokens))
         .or(parse_literal(tokens))
+        .or(parse_var_declaration(tokens))
 }
 
-pub fn parse(tokens: &[Token]) -> anyhow::Result<Expression> {
-    match parse_expression(tokens) {
-        None => bail!("Cannot parse expression"),
-        Some((expr, _)) => Ok(expr),
+fn parse_var_declaration(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+    let (_, tokens) = expect_token(tokens, TokenType::Var)?;
+    let (identifier, tokens) = expect_maybe_token(tokens, TokenType::Identifier);
+    // TODO: recovery: pop tokens until a sensibe point
+    if identifier.is_none() {
+        return Some((
+            Expression::Error(String::from("expected identifier")),
+            tokens,
+        ));
     }
+    let identifier = identifier.unwrap();
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::Equal);
+    let expr = parse_expression(tokens);
+    if expr.is_none() {
+        return Some((
+            Expression::Error(String::from("expected expression")),
+            tokens,
+        ));
+    }
+    let (expr, tokens) = expr.unwrap();
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
+    Some((
+        Expression::Variable(identifier.lexeme, Box::new(expr)),
+        tokens,
+    ))
+}
+
+// TODO: propagate errors
+pub fn parse(tokens: &[Token]) -> anyhow::Result<Vec<Expression>> {
+    let mut result: Vec<Expression> = vec![];
+    let mut current_tokens = tokens;
+    loop {
+        match parse_expression(current_tokens) {
+            None => break,
+            Some((expr, rest)) => {
+                result.push(expr);
+                current_tokens = rest;
+            }
+        }
+    }
+    Ok(result)
 }

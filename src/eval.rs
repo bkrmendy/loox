@@ -1,6 +1,9 @@
 use anyhow::{bail, Ok};
+use rpds::HashTrieMap;
 
 use crate::parse::{BinaryOp, Expression, Literal, UnaryOp};
+
+pub type Environment = HashTrieMap<String, Expression>;
 
 fn eval_unary_op(op: UnaryOp, expression: Expression) -> anyhow::Result<Expression> {
     match (op, expression) {
@@ -95,16 +98,51 @@ fn eval_binary_op(op: BinaryOp, left: Expression, right: Expression) -> anyhow::
     }
 }
 
-pub fn eval(expression: Expression) -> anyhow::Result<Expression> {
+pub fn eval_expression(
+    env: &Environment,
+    expression: Expression,
+) -> anyhow::Result<(Environment, Expression)> {
     match expression {
-        Expression::Literal(_) => Ok(expression),
-        Expression::Grouping(expr) => eval(*expr),
-        Expression::Unary(op, expr) => eval(*expr).and_then(|e| eval_unary_op(op, e)),
+        Expression::Literal(Literal::Identifier(name)) => {
+            let value = env
+                .get(&name)
+                .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?;
+            Ok((env.clone(), value.clone()))
+        }
+        Expression::Literal(_) => Ok((env.clone(), expression)),
+        Expression::Grouping(expr) => eval_expression(env, *expr),
+        Expression::Unary(op, expr) => {
+            let (env, e) = eval_expression(env, *expr)?;
+            let resut = eval_unary_op(op, e)?;
+            Ok((env, resut))
+        }
         Expression::Binary(op, left, right) => {
-            let left_evaled = eval(*left)?;
-            let right_evaled = eval(*right)?;
-            eval_binary_op(op, left_evaled, right_evaled)
+            let (env, left_evaled) = eval_expression(env, *left)?;
+            let (env, right_evaled) = eval_expression(&env, *right)?;
+            let result = eval_binary_op(op, left_evaled, right_evaled)?;
+            Ok((env, result))
+        }
+        Expression::Variable(name, expr) => {
+            let (env, val) = eval_expression(env, *expr)?;
+            let next_env = env.insert(name, val.clone());
+            Ok((next_env, val))
         }
         Expression::Error(err) => bail!(err),
     }
+}
+
+pub fn eval(
+    env: Environment,
+    expressions: Vec<Expression>,
+) -> anyhow::Result<(Environment, Option<Expression>)> {
+    let mut current_env: Environment = env;
+    let mut last_evaluated_expression: Option<Expression> = None;
+
+    for expr in expressions {
+        let (next_env, evaluated_expr) = eval_expression(&current_env, expr)?;
+        current_env = next_env;
+        last_evaluated_expression = Some(evaluated_expr);
+    }
+
+    Ok((current_env, last_evaluated_expression))
 }

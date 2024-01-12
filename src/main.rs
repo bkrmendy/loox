@@ -1,25 +1,29 @@
 use std::io::Write;
 
+use eval::Environment;
 use parse::Expression;
+use rpds::HashTrieMap;
 
 mod eval;
 mod parse;
 mod scan;
 mod utils;
 
-fn run(source: &str) -> anyhow::Result<Expression> {
+fn run(env: Environment, source: &str) -> anyhow::Result<(Environment, Option<Expression>)> {
     scan::scan(source)
         .and_then(|tokens| parse::parse(&tokens))
-        .and_then(eval::eval)
+        .and_then(|ast| eval::eval(env, ast))
 }
 
 fn run_file(path: &str) -> anyhow::Result<()> {
     let contents = std::fs::read_to_string(path)?;
-    let _ = run(&contents);
+    let env: HashTrieMap<String, Expression> = HashTrieMap::new();
+    let _ = run(env, &contents);
     Ok(())
 }
 
 fn run_prompt() -> anyhow::Result<()> {
+    let mut env: HashTrieMap<String, Expression> = HashTrieMap::new();
     loop {
         print!("> ");
         std::io::stdout().flush().unwrap();
@@ -28,9 +32,16 @@ fn run_prompt() -> anyhow::Result<()> {
         if buffer.is_empty() {
             return Ok(());
         }
-        let result = run(&buffer);
+        let result = run(env.clone(), &buffer);
         match result {
-            Ok(res) => println!("<| {res}"),
+            Ok((next_env, Some(res))) => {
+                env = next_env;
+                println!("<| {res}")
+            }
+            Ok((next_env, None)) => {
+                env = next_env;
+                print!("")
+            }
             Err(err) => println!("<! {err}"),
         }
     }
@@ -38,10 +49,9 @@ fn run_prompt() -> anyhow::Result<()> {
 
 // TODO
 
-// add the goodness from https://eyalkalderon.com/blog/nom-error-recovery/
-// parse/eval variable declarations
-// parse/eval functions (incl. persistent map for env
+// parse/eval function expressions
 
+// differentiate between statement and expression
 // use nom for scanning (for the line number + offset)
 // parse/eval ifs
 // parse/eval fors, whiles
@@ -67,15 +77,20 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::run;
+    use rpds::HashTrieMap;
+
+    use crate::{parse::Expression, run};
 
     fn run_expr_expect_ok(source: &str) -> String {
-        let result = run(source).expect("expected to be OK");
-        format!("{result}")
+        let env: HashTrieMap<String, Expression> = HashTrieMap::new();
+        let (_, result) = run(env, source).expect("expected to be OK");
+        let expr = result.expect("Expected at least one expression");
+        format!("{expr}")
     }
 
     fn run_expr_expect_err(source: &str) -> String {
-        let result = run(source).unwrap_err();
+        let env: HashTrieMap<String, Expression> = HashTrieMap::new();
+        let result = run(env, source).unwrap_err();
         format!("{result}")
     }
 
@@ -161,5 +176,33 @@ mod tests {
         let src = "111 <= 111";
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
+    }
+
+    #[test]
+    fn test_variable_decl() {
+        let src = r###"
+        var a = 3;
+        a"###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""3""###);
+    }
+
+    #[test]
+    fn test_variable_addition() {
+        let src = r###"
+        var a = 3;
+        a + 4"###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""7""###);
+    }
+
+    #[test]
+    fn test_variables_boolean_op() {
+        let src = r###"
+        var a = true;
+        var b = false;
+        a and b"###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 }
