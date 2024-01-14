@@ -76,6 +76,27 @@ impl Display for BinaryOp {
 }
 
 #[derive(Debug, Clone)]
+struct FunctionSyntax {
+    // fun
+    name: String,
+    // `(` + identifier+ + `)`
+    params: Vec<String>,
+    // `{` + expression* + `}`
+    body: Vec<Expression>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Statement {
+    // `var` name `=` expression `;`
+    VariableDeclaration(String, Box<Expression>),
+    // see `FunctionSyntax`
+    // FunctionDeclaration(FunctionSyntax),
+    // here so that expressions can be typed in the repl
+    FreeStandingExpression(Box<Expression>),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum Expression {
     // `(` + expression + `)`
     Grouping(Box<Expression>),
@@ -85,8 +106,8 @@ pub enum Expression {
     Literal(Literal),
     // expression + binary op + expression
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
-    // `var` name `=` expression `;`
-    Variable(String, Box<Expression>),
+    // name + `(` + expression* + `)` + `;`
+    // FunctionCall(String, Vec<Expression>),
     Error(String),
 }
 
@@ -97,8 +118,12 @@ impl Display for Expression {
             Expression::Unary(op, e) => write!(f, "{op}{e}"),
             Expression::Literal(literal) => write!(f, "{literal}"),
             Expression::Binary(op, left, right) => write!(f, "({op} {left} {right})"),
-            Expression::Variable(name, value) => write!(f, "var {name} = {value}"),
             Expression::Error(e) => write!(f, "[{e}]"),
+            // Expression::FunctionCall(name, args) => {
+            //     let param_list: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            //     let param_list = param_list.join(", ");
+            //     write!(f, "{name}({param_list})")
+            // }
         }
     }
 }
@@ -298,16 +323,15 @@ fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
         .or(parse_unary_expression(tokens))
         .or(parse_grouping(tokens))
         .or(parse_literal(tokens))
-        .or(parse_var_declaration(tokens))
 }
 
-fn parse_var_declaration(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+fn parse_var_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {
     let (_, tokens) = expect_token(tokens, TokenType::Var)?;
     let (identifier, tokens) = expect_maybe_token(tokens, TokenType::Identifier);
     // TODO: recovery: pop tokens until a sensibe point
     if identifier.is_none() {
         return Some((
-            Expression::Error(String::from("expected identifier")),
+            Statement::Error(String::from("expected identifier")),
             tokens,
         ));
     }
@@ -316,27 +340,37 @@ fn parse_var_declaration(tokens: &[Token]) -> Option<(Expression, &[Token])> {
     let expr = parse_expression(tokens);
     if expr.is_none() {
         return Some((
-            Expression::Error(String::from("expected expression")),
+            Statement::Error(String::from("expected expression")),
             tokens,
         ));
     }
     let (expr, tokens) = expr.unwrap();
     let (_, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
     Some((
-        Expression::Variable(identifier.lexeme, Box::new(expr)),
+        Statement::VariableDeclaration(identifier.lexeme, Box::new(expr)),
         tokens,
     ))
 }
 
-// TODO: propagate errors
-pub fn parse(tokens: &[Token]) -> anyhow::Result<Vec<Expression>> {
-    let mut result: Vec<Expression> = vec![];
+// fn parse_function_call(tokens: &[Token]) -> Option<(Expression, &[Token])> {}
+// fn parse_function_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {}
+
+fn parse_expression_statement(tokens: &[Token]) -> Option<(Statement, &[Token])> {
+    parse_expression(tokens).map(|(e, ts)| (Statement::FreeStandingExpression(Box::new(e)), ts))
+}
+
+fn parse_statement(tokens: &[Token]) -> Option<(Statement, &[Token])> {
+    parse_var_declaration(tokens).or(parse_expression_statement(tokens))
+}
+
+pub fn parse(tokens: &[Token]) -> anyhow::Result<Vec<Statement>> {
+    let mut result: Vec<Statement> = vec![];
     let mut current_tokens = tokens;
     loop {
-        match parse_expression(current_tokens) {
+        match parse_statement(current_tokens) {
             None => break,
-            Some((expr, rest)) => {
-                result.push(expr);
+            Some((statement, rest)) => {
+                result.push(statement);
                 current_tokens = rest;
             }
         }

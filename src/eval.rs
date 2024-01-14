@@ -1,7 +1,7 @@
 use anyhow::{bail, Ok};
 use rpds::HashTrieMap;
 
-use crate::parse::{BinaryOp, Expression, Literal, UnaryOp};
+use crate::parse::{BinaryOp, Expression, Literal, Statement, UnaryOp};
 
 pub type Environment = HashTrieMap<String, Expression>;
 
@@ -102,6 +102,7 @@ pub fn eval_expression(
     env: &Environment,
     expression: Expression,
 ) -> anyhow::Result<(Environment, Expression)> {
+    // TODO: it's not really necessary to return an env
     match expression {
         Expression::Literal(Literal::Identifier(name)) => {
             let value = env
@@ -122,27 +123,38 @@ pub fn eval_expression(
             let result = eval_binary_op(op, left_evaled, right_evaled)?;
             Ok((env, result))
         }
-        Expression::Variable(name, expr) => {
+        Expression::Error(err) => bail!(err),
+    }
+}
+
+fn eval_statement(
+    env: &Environment,
+    statement: Statement,
+) -> anyhow::Result<(Environment, Expression)> {
+    match statement {
+        Statement::VariableDeclaration(name, expr) => {
             let (env, val) = eval_expression(env, *expr)?;
             let next_env = env.insert(name, val.clone());
             Ok((next_env, val))
         }
-        Expression::Error(err) => bail!(err),
+        Statement::FreeStandingExpression(expr) => eval_expression(env, *expr),
+        Statement::Error(err) => bail!(err),
     }
 }
 
 pub fn eval(
     env: Environment,
-    expressions: Vec<Expression>,
+    statements: Vec<Statement>,
 ) -> anyhow::Result<(Environment, Option<Expression>)> {
     let mut current_env: Environment = env;
-    let mut last_evaluated_expression: Option<Expression> = None;
+    let mut last_result: Option<Expression> = None;
 
-    for expr in expressions {
-        let (next_env, evaluated_expr) = eval_expression(&current_env, expr)?;
+    for statement in statements {
+        let (next_env, result) = eval_statement(&current_env, statement)?;
+
         current_env = next_env;
-        last_evaluated_expression = Some(evaluated_expr);
+        last_result = Some(result);
     }
 
-    Ok((current_env, last_evaluated_expression))
+    Ok((current_env, last_result))
 }

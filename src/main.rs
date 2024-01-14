@@ -49,15 +49,20 @@ fn run_prompt() -> anyhow::Result<()> {
 
 // TODO
 
-// parse/eval function expressions
+// parse/eval functions
 
-// differentiate between statement and expression
-// use nom for scanning (for the line number + offset)
+// represent variable values in the env with `Rc`s
+// parse/eval variable assignments
+
+// propagate errors from parsing
+
 // parse/eval ifs
 // parse/eval fors, whiles
 
 // parse/eval objects
 // parse/eval scopes
+
+// use nom for scanning (for the line number + offset)
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
