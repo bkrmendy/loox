@@ -76,13 +76,21 @@ impl Display for BinaryOp {
 }
 
 #[derive(Debug, Clone)]
-struct FunctionSyntax {
+pub struct FunctionDeclarationSyntax {
     // fun
-    name: String,
+    pub name: String,
     // `(` + identifier+ + `)`
-    params: Vec<String>,
+    pub params: Vec<String>,
     // `{` + expression* + `}`
-    body: Vec<Expression>,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionLiteralSyntax {
+    // `(` + identifier+ + `)`
+    pub params: Vec<String>,
+    // `{` + expression* + `}`
+    pub body: Vec<Statement>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,9 +98,10 @@ pub enum Statement {
     // `var` name `=` expression `;`
     VariableDeclaration(String, Box<Expression>),
     // see `FunctionSyntax`
-    // FunctionDeclaration(FunctionSyntax),
+    FunctionDeclaration(FunctionDeclarationSyntax),
     // here so that expressions can be typed in the repl
     FreeStandingExpression(Box<Expression>),
+    // represent errors
     Error(String),
 }
 
@@ -106,8 +115,11 @@ pub enum Expression {
     Literal(Literal),
     // expression + binary op + expression
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
-    // name + `(` + expression* + `)` + `;`
-    // FunctionCall(String, Vec<Expression>),
+    // name + `(` + expression* + `)`
+    FunctionCall(String, Vec<Expression>),
+    // "lambda" function
+    FunctionLiteral(FunctionLiteralSyntax),
+    // represent errors
     Error(String),
 }
 
@@ -119,11 +131,12 @@ impl Display for Expression {
             Expression::Literal(literal) => write!(f, "{literal}"),
             Expression::Binary(op, left, right) => write!(f, "({op} {left} {right})"),
             Expression::Error(e) => write!(f, "[{e}]"),
-            // Expression::FunctionCall(name, args) => {
-            //     let param_list: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-            //     let param_list = param_list.join(", ");
-            //     write!(f, "{name}({param_list})")
-            // }
+            Expression::FunctionCall(name, args) => {
+                let param_list: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                let param_list = param_list.join(", ");
+                write!(f, "{name}({param_list})")
+            }
+            Expression::FunctionLiteral(_) => write!(f, "#anonymous function"),
         }
     }
 }
@@ -253,7 +266,7 @@ fn parse_binary_op(tokens: &[Token]) -> Option<(BinaryOp, &[Token])> {
         TokenType::BangEqual => Some((BinaryOp::NEquals, rest)),
         TokenType::And => Some((BinaryOp::And, rest)),
         TokenType::Or => Some((BinaryOp::Or, rest)),
-        _ => None, // TODO
+        _ => None, // TODO: add any missing operators
     }
 }
 
@@ -320,6 +333,7 @@ fn parse_binary(tokens: &[Token], current_prec: u8) -> Option<(Expression, &[Tok
 
 fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
     parse_binary(tokens, 0)
+        .or(parse_function_call(tokens))
         .or(parse_unary_expression(tokens))
         .or(parse_grouping(tokens))
         .or(parse_literal(tokens))
@@ -339,6 +353,7 @@ fn parse_var_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {
     let (_, tokens) = expect_maybe_token(tokens, TokenType::Equal);
     let expr = parse_expression(tokens);
     if expr.is_none() {
+        // TODO: signal error, but continue
         return Some((
             Statement::Error(String::from("expected expression")),
             tokens,
@@ -352,15 +367,70 @@ fn parse_var_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {
     ))
 }
 
-// fn parse_function_call(tokens: &[Token]) -> Option<(Expression, &[Token])> {}
-// fn parse_function_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {}
+fn parse_function_call(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+    let (identifier, tokens) = expect_token(tokens, TokenType::Identifier)?;
+    let (_, tokens) = expect_token(tokens, TokenType::LeftParen)?;
+    let mut args: Vec<Expression> = Vec::new();
+    let mut tokens = tokens;
+    while let Some((expr, tokens_after_expression)) = parse_expression(tokens) {
+        args.push(expr);
+        let (_, tokens_after_comma) = expect_maybe_token(tokens_after_expression, TokenType::Comma);
+        tokens = tokens_after_comma
+    }
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::RightParen);
+    // if left_paren.is_none() {
+    //     // TODO: signal error, but continue
+    //     return Some((
+    //         Expression::Error(String::from("expected expression")),
+    //         tokens,
+    //     ));
+    // }
+    Some((
+        Expression::FunctionCall(identifier.lexeme.clone(), args),
+        tokens,
+    ))
+}
+fn parse_function_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {
+    // TODO: needs synchronization
+    let (_, tokens) = expect_token(tokens, TokenType::Fun)?;
+    let (identifier, tokens) = expect_token(tokens, TokenType::Identifier)?;
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::LeftParen);
+    let mut tokens = tokens;
+    let mut arg_names: Vec<String> = Vec::new();
+    while let Some((t, tokens_after_arg_name)) = expect_token(tokens, TokenType::Identifier) {
+        arg_names.push(t.lexeme.clone());
+        let (_, tokens_after_comma) = expect_maybe_token(tokens_after_arg_name, TokenType::Comma);
+        tokens = tokens_after_comma;
+    }
+
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::RightParen);
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::LeftBrace);
+    let mut tokens = tokens;
+    let mut statements: Vec<Statement> = Vec::new();
+    while let Some((statement, rest)) = parse_statement(tokens) {
+        statements.push(statement);
+        tokens = rest;
+    }
+
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::RightBrace);
+    let function_definition = FunctionDeclarationSyntax {
+        name: identifier.lexeme.clone(),
+        params: arg_names,
+        body: statements,
+    };
+    Some((Statement::FunctionDeclaration(function_definition), tokens))
+}
 
 fn parse_expression_statement(tokens: &[Token]) -> Option<(Statement, &[Token])> {
-    parse_expression(tokens).map(|(e, ts)| (Statement::FreeStandingExpression(Box::new(e)), ts))
+    let (expr, tokens) = parse_expression(tokens)?;
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
+    Some((Statement::FreeStandingExpression(Box::new(expr)), tokens))
 }
 
 fn parse_statement(tokens: &[Token]) -> Option<(Statement, &[Token])> {
-    parse_var_declaration(tokens).or(parse_expression_statement(tokens))
+    parse_var_declaration(tokens)
+        .or(parse_expression_statement(tokens))
+        .or(parse_function_declaration(tokens))
 }
 
 pub fn parse(tokens: &[Token]) -> anyhow::Result<Vec<Statement>> {

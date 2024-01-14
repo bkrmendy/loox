@@ -49,12 +49,10 @@ fn run_prompt() -> anyhow::Result<()> {
 
 // TODO
 
-// parse/eval functions
+// propagate errors from parsing
 
 // represent variable values in the env with `Rc`s
 // parse/eval variable assignments
-
-// propagate errors from parsing
 
 // parse/eval ifs
 // parse/eval fors, whiles
@@ -209,5 +207,30 @@ mod tests {
         a and b"###;
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""false""###);
+    }
+
+    #[test]
+    fn test_simple_function() {
+        let src = r###"
+        fun add(a, b) {
+            a + b
+        }
+        add(11, 22)
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""33""###);
+    }
+
+    #[test]
+    fn test_function_with_var_decl() {
+        let src = r###"
+        fun add3(n) {
+            var c = 3;
+            c + n;
+        }
+        add3(22)
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""25""###);
     }
 }

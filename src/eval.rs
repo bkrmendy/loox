@@ -1,7 +1,12 @@
+use std::iter::zip;
+
 use anyhow::{bail, Ok};
 use rpds::HashTrieMap;
 
-use crate::parse::{BinaryOp, Expression, Literal, Statement, UnaryOp};
+use crate::parse::{
+    BinaryOp, Expression, FunctionDeclarationSyntax, FunctionLiteralSyntax, Literal, Statement,
+    UnaryOp,
+};
 
 pub type Environment = HashTrieMap<String, Expression>;
 
@@ -123,6 +128,24 @@ pub fn eval_expression(
             let result = eval_binary_op(op, left_evaled, right_evaled)?;
             Ok((env, result))
         }
+        Expression::FunctionLiteral(_) => todo!(),
+        Expression::FunctionCall(name, args) => {
+            let fn_def = env
+                .get(&name)
+                .ok_or(anyhow::Error::msg(format!("Cannot find function: {name}")))?;
+            let fn_def = match fn_def {
+                Expression::FunctionLiteral(literal) => anyhow::Ok(literal),
+                _ => bail!(format!("{name} is not a function")),
+            }?;
+            let mut env_for_function = env.clone();
+            for (arg_name, arg_value) in zip(fn_def.params.iter(), args) {
+                let (_, value) = eval_expression(env, arg_value)?;
+                env_for_function = env_for_function.insert(arg_name.clone(), value);
+            }
+            let (next_env, result) = eval(env_for_function, fn_def.body.clone())?;
+            let result = result.ok_or(anyhow::Error::msg("missing return value"))?;
+            Ok((next_env, result))
+        }
         Expression::Error(err) => bail!(err),
     }
 }
@@ -131,6 +154,7 @@ fn eval_statement(
     env: &Environment,
     statement: Statement,
 ) -> anyhow::Result<(Environment, Expression)> {
+    // TODO: returing the expression is not necessary
     match statement {
         Statement::VariableDeclaration(name, expr) => {
             let (env, val) = eval_expression(env, *expr)?;
@@ -138,6 +162,11 @@ fn eval_statement(
             Ok((next_env, val))
         }
         Statement::FreeStandingExpression(expr) => eval_expression(env, *expr),
+        Statement::FunctionDeclaration(FunctionDeclarationSyntax { name, params, body }) => {
+            let function_expr = Expression::FunctionLiteral(FunctionLiteralSyntax { params, body });
+            let next_env = env.insert(name, function_expr.clone());
+            Ok((next_env, function_expr))
+        }
         Statement::Error(err) => bail!(err),
     }
 }
