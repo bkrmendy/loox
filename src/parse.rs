@@ -97,6 +97,8 @@ pub struct FunctionLiteralSyntax {
 pub enum Statement {
     // `var` name `=` expression `;`
     VariableDeclaration(String, Box<Expression>),
+    // name `=` expression `;`
+    VariableAssignment(String, Box<Expression>),
     // see `FunctionSyntax`
     FunctionDeclaration(FunctionDeclarationSyntax),
     // here so that expressions can be typed in the repl
@@ -367,6 +369,17 @@ fn parse_var_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {
     ))
 }
 
+fn parse_variable_assignment(tokens: &[Token]) -> Option<(Statement, &[Token])> {
+    let (identifier, tokens) = expect_token(tokens, TokenType::Identifier)?;
+    let (_, tokens) = expect_token(tokens, TokenType::Equal)?;
+    let (expr, tokens) = parse_expression(tokens)?; // TODO; recovery
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
+    Some((
+        Statement::VariableAssignment(identifier.lexeme.clone(), Box::new(expr)),
+        tokens,
+    ))
+}
+
 fn parse_function_call(tokens: &[Token]) -> Option<(Expression, &[Token])> {
     let (identifier, tokens) = expect_token(tokens, TokenType::Identifier)?;
     let (_, tokens) = expect_token(tokens, TokenType::LeftParen)?;
@@ -429,6 +442,7 @@ fn parse_expression_statement(tokens: &[Token]) -> Option<(Statement, &[Token])>
 
 fn parse_statement(tokens: &[Token]) -> Option<(Statement, &[Token])> {
     parse_var_declaration(tokens)
+        .or(parse_variable_assignment(tokens))
         .or(parse_expression_statement(tokens))
         .or(parse_function_declaration(tokens))
 }

@@ -1,4 +1,4 @@
-use std::iter::zip;
+use std::{cell::RefCell, iter::zip, rc::Rc};
 
 use anyhow::{bail, Ok};
 use rpds::HashTrieMap;
@@ -8,9 +8,14 @@ use crate::parse::{
     UnaryOp,
 };
 
-pub type Environment = HashTrieMap<String, Expression>;
+pub type LooxReference<T> = Rc<RefCell<T>>;
+fn make_loox_ref<T>(t: T) -> LooxReference<T> {
+    Rc::new(RefCell::new(t))
+}
 
-fn eval_unary_op(op: UnaryOp, expression: Expression) -> anyhow::Result<Expression> {
+pub type Environment = HashTrieMap<String, LooxReference<Expression>>;
+
+fn eval_unary_op(op: UnaryOp, expression: &Expression) -> anyhow::Result<Expression> {
     match (op, expression) {
         (UnaryOp::Bang, Expression::Literal(Literal::True)) => {
             Ok(Expression::Literal(Literal::False))
@@ -78,36 +83,38 @@ fn do_bool_op(
     }
 }
 
-fn eval_binary_op(op: BinaryOp, left: Expression, right: Expression) -> anyhow::Result<Expression> {
+fn eval_binary_op(
+    op: BinaryOp,
+    left: &Expression,
+    right: &Expression,
+) -> anyhow::Result<Expression> {
     match op {
-        BinaryOp::Plus => do_number_op(&left, &right, |l, r| l + r),
-        BinaryOp::Minus => do_number_op(&left, &right, |l, r| l - r),
-        BinaryOp::Times => do_number_op(&left, &right, |l, r| l * r),
-        BinaryOp::Div => do_number_op(&left, &right, |l, r| l / r),
-        BinaryOp::Gt => do_number_comparison(&left, &right, |l, r| l >= r),
-        BinaryOp::Gte => do_number_comparison(&left, &right, |l, r| l > r),
-        BinaryOp::Lt => do_number_comparison(&left, &right, |l, r| l < r),
-        BinaryOp::Lte => do_number_comparison(&left, &right, |l, r| l <= r),
-        BinaryOp::And => do_bool_op(&left, &right, |l, r| l && r),
-        BinaryOp::Or => do_bool_op(&left, &right, |l, r| l || r),
-        BinaryOp::Equals => do_bool_op(&left, &right, |l, r| l == r).or(do_number_comparison(
-            &left,
-            &right,
-            |l, r| l == r,
-        )),
-        BinaryOp::NEquals => do_bool_op(&left, &right, |l, r| l != r).or(do_number_comparison(
-            &left,
-            &right,
-            |l, r| l != r,
-        )),
+        BinaryOp::Plus => do_number_op(left, right, |l, r| l + r),
+        BinaryOp::Minus => do_number_op(left, right, |l, r| l - r),
+        BinaryOp::Times => do_number_op(left, right, |l, r| l * r),
+        BinaryOp::Div => do_number_op(left, right, |l, r| l / r),
+        BinaryOp::Gt => do_number_comparison(left, right, |l, r| l >= r),
+        BinaryOp::Gte => do_number_comparison(left, right, |l, r| l > r),
+        BinaryOp::Lt => do_number_comparison(left, right, |l, r| l < r),
+        BinaryOp::Lte => do_number_comparison(left, right, |l, r| l <= r),
+        BinaryOp::And => do_bool_op(left, right, |l, r| l && r),
+        BinaryOp::Or => do_bool_op(left, right, |l, r| l || r),
+        BinaryOp::Equals => {
+            do_bool_op(left, right, |l, r| l == r)
+                .or(do_number_comparison(left, right, |l, r| l == r))
+        }
+        BinaryOp::NEquals => {
+            do_bool_op(left, right, |l, r| l != r)
+                .or(do_number_comparison(left, right, |l, r| l != r))
+        }
     }
 }
 
 pub fn eval_expression(
     env: &Environment,
     expression: Expression,
-) -> anyhow::Result<(Environment, Expression)> {
-    // TODO: it's not really necessary to return an env
+) -> anyhow::Result<(Environment, LooxReference<Expression>)> {
+    // TODO: it's (maybe) not really necessary to return an env
     match expression {
         Expression::Literal(Literal::Identifier(name)) => {
             let value = env
@@ -115,25 +122,26 @@ pub fn eval_expression(
                 .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?;
             Ok((env.clone(), value.clone()))
         }
-        Expression::Literal(_) => Ok((env.clone(), expression)),
+        Expression::Literal(_) => Ok((env.clone(), make_loox_ref(expression))),
         Expression::Grouping(expr) => eval_expression(env, *expr),
         Expression::Unary(op, expr) => {
             let (env, e) = eval_expression(env, *expr)?;
-            let resut = eval_unary_op(op, e)?;
-            Ok((env, resut))
+            let result = eval_unary_op(op, &e.borrow())?;
+            Ok((env, make_loox_ref(result)))
         }
         Expression::Binary(op, left, right) => {
             let (env, left_evaled) = eval_expression(env, *left)?;
             let (env, right_evaled) = eval_expression(&env, *right)?;
-            let result = eval_binary_op(op, left_evaled, right_evaled)?;
-            Ok((env, result))
+            let result = eval_binary_op(op, &left_evaled.borrow(), &right_evaled.borrow())?;
+            Ok((env, make_loox_ref(result)))
         }
         Expression::FunctionLiteral(_) => todo!(),
         Expression::FunctionCall(name, args) => {
             let fn_def = env
                 .get(&name)
                 .ok_or(anyhow::Error::msg(format!("Cannot find function: {name}")))?;
-            let fn_def = match fn_def {
+            let fn_def = match fn_def.borrow().clone() {
+                // TODO :(
                 Expression::FunctionLiteral(literal) => anyhow::Ok(literal),
                 _ => bail!(format!("{name} is not a function")),
             }?;
@@ -153,17 +161,28 @@ pub fn eval_expression(
 fn eval_statement(
     env: &Environment,
     statement: Statement,
-) -> anyhow::Result<(Environment, Expression)> {
-    // TODO: returing the expression is not necessary
+) -> anyhow::Result<(Environment, LooxReference<Expression>)> {
+    // TODO: returing the expression (maybe) is not necessary
     match statement {
         Statement::VariableDeclaration(name, expr) => {
             let (env, val) = eval_expression(env, *expr)?;
             let next_env = env.insert(name, val.clone());
             Ok((next_env, val))
         }
+        Statement::VariableAssignment(name, expr) => {
+            let (env, evaled) = eval_expression(env, *expr)?;
+            let value = env
+                .get(&name)
+                .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?;
+            *value.borrow_mut() = evaled.borrow().clone();
+            Ok((env.clone(), value.clone()))
+        }
         Statement::FreeStandingExpression(expr) => eval_expression(env, *expr),
         Statement::FunctionDeclaration(FunctionDeclarationSyntax { name, params, body }) => {
-            let function_expr = Expression::FunctionLiteral(FunctionLiteralSyntax { params, body });
+            let function_expr = make_loox_ref(Expression::FunctionLiteral(FunctionLiteralSyntax {
+                params,
+                body,
+            }));
             let next_env = env.insert(name, function_expr.clone());
             Ok((next_env, function_expr))
         }
@@ -174,9 +193,9 @@ fn eval_statement(
 pub fn eval(
     env: Environment,
     statements: Vec<Statement>,
-) -> anyhow::Result<(Environment, Option<Expression>)> {
+) -> anyhow::Result<(Environment, Option<LooxReference<Expression>>)> {
     let mut current_env: Environment = env;
-    let mut last_result: Option<Expression> = None;
+    let mut last_result: Option<LooxReference<Expression>> = None;
 
     for statement in statements {
         let (next_env, result) = eval_statement(&current_env, statement)?;

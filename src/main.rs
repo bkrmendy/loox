@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use eval::Environment;
+use eval::{Environment, LooxReference};
 use parse::Expression;
 use rpds::HashTrieMap;
 
@@ -9,7 +9,10 @@ mod parse;
 mod scan;
 mod utils;
 
-fn run(env: Environment, source: &str) -> anyhow::Result<(Environment, Option<Expression>)> {
+fn run(
+    env: Environment,
+    source: &str,
+) -> anyhow::Result<(Environment, Option<LooxReference<Expression>>)> {
     scan::scan(source)
         .and_then(|tokens| parse::parse(&tokens))
         .and_then(|ast| eval::eval(env, ast))
@@ -17,13 +20,13 @@ fn run(env: Environment, source: &str) -> anyhow::Result<(Environment, Option<Ex
 
 fn run_file(path: &str) -> anyhow::Result<()> {
     let contents = std::fs::read_to_string(path)?;
-    let env: HashTrieMap<String, Expression> = HashTrieMap::new();
+    let env: Environment = HashTrieMap::new();
     let _ = run(env, &contents);
     Ok(())
 }
 
 fn run_prompt() -> anyhow::Result<()> {
-    let mut env: HashTrieMap<String, Expression> = HashTrieMap::new();
+    let mut env: Environment = HashTrieMap::new();
     loop {
         print!("> ");
         std::io::stdout().flush().unwrap();
@@ -36,7 +39,7 @@ fn run_prompt() -> anyhow::Result<()> {
         match result {
             Ok((next_env, Some(res))) => {
                 env = next_env;
-                println!("<| {res}")
+                println!("<| {}", res.borrow())
             }
             Ok((next_env, None)) => {
                 env = next_env;
@@ -49,16 +52,20 @@ fn run_prompt() -> anyhow::Result<()> {
 
 // TODO
 
-// propagate errors from parsing
-
 // represent variable values in the env with `Rc`s
 // parse/eval variable assignments
+
+// propagate errors from parsing
 
 // parse/eval ifs
 // parse/eval fors, whiles
 
 // parse/eval objects
 // parse/eval scopes
+
+// add support for function literals
+// add support for return statements
+// add support for capturing in functions
 
 // use nom for scanning (for the line number + offset)
 
@@ -82,17 +89,17 @@ fn main() -> anyhow::Result<()> {
 mod tests {
     use rpds::HashTrieMap;
 
-    use crate::{parse::Expression, run};
+    use crate::{eval::Environment, run};
 
     fn run_expr_expect_ok(source: &str) -> String {
-        let env: HashTrieMap<String, Expression> = HashTrieMap::new();
+        let env: Environment = HashTrieMap::new();
         let (_, result) = run(env, source).expect("expected to be OK");
         let expr = result.expect("Expected at least one expression");
-        format!("{expr}")
+        format!("{}", expr.borrow())
     }
 
     fn run_expr_expect_err(source: &str) -> String {
-        let env: HashTrieMap<String, Expression> = HashTrieMap::new();
+        let env: Environment = HashTrieMap::new();
         let result = run(env, source).unwrap_err();
         format!("{result}")
     }
@@ -232,5 +239,39 @@ mod tests {
         "###;
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""25""###);
+    }
+
+    #[test]
+    fn test_variable_reassignment() {
+        let src = r###"
+        var a = 1;
+        a = 2;
+        a
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""2""###);
+    }
+
+    #[test]
+    fn test_variable_points_to_other_variable() {
+        let src = r###"
+        var a = 1;
+        var b = a;
+        a == b
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""true""###);
+    }
+
+    #[test]
+    fn test_variable_points_to_reassignment() {
+        let src = r###"
+        var a = 1;
+        var b = a;
+        a = 2;
+        a == b
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 }
