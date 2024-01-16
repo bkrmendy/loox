@@ -50,28 +50,6 @@ fn run_prompt() -> anyhow::Result<()> {
     }
 }
 
-// TODO
-
-// propagate errors from parsing
-
-// parse/eval ifs
-// parse/eval fors, whiles
-
-// parse/eval objects
-// make sure only objects have reference semantics
-// make sure numbers have value semantics
-// parse/eval scopes
-
-// add support for function literals
-// add support for return statements
-
-// use nom for scanning (for the line number + offset)
-
-// type system
-// add support for type annotations
-
-// VSCode extension
-
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 2 {
