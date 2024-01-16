@@ -68,6 +68,8 @@ fn run_prompt() -> anyhow::Result<()> {
 // use nom for scanning (for the line number + offset)
 
 // type system
+// add support for type annotations
+
 // VSCode extension
 
 fn main() -> anyhow::Result<()> {
