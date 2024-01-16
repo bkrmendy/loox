@@ -16,6 +16,10 @@
 - [ ] add support for function literals
 - [ ] add support for return statements
 
+### Standard library
+- [ ] print, read from terminal, file
+- [ ] built-in arrays + functions
+- [ ] built-in hashmap + functions
 
 ### Type system
 - [ ] add a type system
@@ -23,4 +27,5 @@
 - [ ] add support for type annotations
 
 ### Ecosystem
-VSCode extension
+- [ ] Language server that implements LSP
+- [ ] VSCode extension
