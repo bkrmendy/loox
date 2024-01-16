@@ -283,9 +283,10 @@ fn precedence(op: &BinaryOp) -> u8 {
 }
 
 fn parse_binary_expr_operand(tokens: &[Token]) -> Option<(Expression, &[Token])> {
-    parse_literal(tokens)
+    parse_function_call(tokens)
         .or(parse_grouping(tokens))
         .or(parse_unary_expression(tokens))
+        .or(parse_literal(tokens))
 }
 
 fn parse_binary_with_recovery(tokens: &[Token], current_prec: u8) -> (Expression, &[Token]) {

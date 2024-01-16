@@ -13,9 +13,9 @@ fn run(
     env: Environment,
     source: &str,
 ) -> anyhow::Result<(Environment, Option<LooxReference<Expression>>)> {
-    scan::scan(source)
-        .and_then(|tokens| parse::parse(&tokens))
-        .and_then(|ast| eval::eval(env, ast))
+    let tokens = scan::scan(source)?;
+    let ast = parse::parse(&tokens).expect("should always succeed");
+    eval::eval(env, ast)
 }
 
 fn run_file(path: &str) -> anyhow::Result<()> {
@@ -52,9 +52,6 @@ fn run_prompt() -> anyhow::Result<()> {
 
 // TODO
 
-// represent variable values in the env with `Rc`s
-// parse/eval variable assignments
-
 // propagate errors from parsing
 
 // parse/eval ifs
@@ -68,6 +65,9 @@ fn run_prompt() -> anyhow::Result<()> {
 // add support for capturing in functions
 
 // use nom for scanning (for the line number + offset)
+
+// type system
+// VSCode extension
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -239,6 +239,19 @@ mod tests {
         "###;
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""25""###);
+    }
+
+    #[test]
+    fn test_function_with_binary_op() {
+        let src = r###"
+        fun add3(n) {
+            var c = 3;
+            c + n;
+        }
+        add3(22) + 2
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""27""###);
     }
 
     #[test]
