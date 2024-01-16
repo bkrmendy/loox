@@ -141,11 +141,11 @@ pub fn eval_expression(
                 .get(&name)
                 .ok_or(anyhow::Error::msg(format!("Cannot find function: {name}")))?;
             let fn_def = match fn_def.borrow().clone() {
-                // TODO :(
+                // TODO .clone() :(
                 Expression::FunctionLiteral(literal) => anyhow::Ok(literal),
                 _ => bail!(format!("{name} is not a function")),
             }?;
-            let mut env_for_function = env.clone();
+            let mut env_for_function = fn_def.enclosing_env.clone();
             for (arg_name, arg_value) in zip(fn_def.params.iter(), args) {
                 let (_, value) = eval_expression(env, arg_value)?;
                 env_for_function = env_for_function.insert(arg_name.clone(), value);
@@ -182,6 +182,7 @@ fn eval_statement(
             let function_expr = make_loox_ref(Expression::FunctionLiteral(FunctionLiteralSyntax {
                 params,
                 body,
+                enclosing_env: env.clone(),
             }));
             let next_env = env.insert(name, function_expr.clone());
             Ok((next_env, function_expr))

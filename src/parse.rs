@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::scan::{Token, TokenLiteral, TokenType};
+use crate::{scan::{Token, TokenLiteral, TokenType}, eval::Environment};
 
 #[derive(Debug, Clone)]
 pub enum Literal {
@@ -91,6 +91,7 @@ pub struct FunctionLiteralSyntax {
     pub params: Vec<String>,
     // `{` + expression* + `}`
     pub body: Vec<Statement>,
+    pub enclosing_env: Environment
 }
 
 #[derive(Debug, Clone)]

@@ -58,11 +58,12 @@ fn run_prompt() -> anyhow::Result<()> {
 // parse/eval fors, whiles
 
 // parse/eval objects
+// make sure only objects have reference semantics
+// make sure numbers have value semantics
 // parse/eval scopes
 
 // add support for function literals
 // add support for return statements
-// add support for capturing in functions
 
 // use nom for scanning (for the line number + offset)
 
@@ -286,5 +287,21 @@ mod tests {
         "###;
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
+    }
+
+    #[test]
+    fn test_adder() {
+        let src = r###"
+        fun adder(a) {
+            fun add(b) {
+                a + b
+            }
+        }
+
+        var add2 = adder(2)
+        add2(3)
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""5""###);
     }
 }
