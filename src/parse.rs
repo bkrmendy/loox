@@ -1,6 +1,9 @@
 use std::fmt::Display;
 
-use crate::{scan::{Token, TokenLiteral, TokenType}, eval::Environment};
+use crate::{
+    eval::Environment,
+    scan::{Token, TokenLiteral, TokenType},
+};
 
 #[derive(Debug, Clone)]
 pub enum Literal {
@@ -91,7 +94,7 @@ pub struct FunctionLiteralSyntax {
     pub params: Vec<String>,
     // `{` + expression* + `}`
     pub body: Vec<Statement>,
-    pub enclosing_env: Environment
+    pub enclosing_env: Environment,
 }
 
 #[derive(Debug, Clone)]
@@ -105,7 +108,7 @@ pub enum Statement {
     // here so that expressions can be typed in the repl
     FreeStandingExpression(Box<Expression>),
     // represent errors
-    Error(String),
+    Error,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +166,37 @@ fn expect_token(tokens: &[Token], token_type: TokenType) -> Option<(Token, &[Tok
         Some((token.clone(), &tokens[1..]))
     } else {
         None
+    }
+}
+
+fn synchronize(tokens: &[Token]) -> &[Token] {
+    let mut tokens = tokens;
+    loop {
+        match tokens.get(0) {
+            None => return tokens,
+            Some(Token {
+                token_type: TokenType::Eof,
+                ..
+            }) => return &tokens[1..],
+            Some(Token {
+                token_type: TokenType::Fun,
+                ..
+            }) => return &tokens[1..],
+            Some(Token {
+                token_type: TokenType::Var,
+                ..
+            }) => return &tokens[1..],
+            Some(Token {
+                token_type: TokenType::IF,
+                ..
+            }) => return &tokens[1..],
+            Some(Token {
+                token_type: TokenType::While,
+                ..
+            }) => return &tokens[1..],
+            _ => (),
+        }
+        tokens = &tokens[1..];
     }
 }
 
@@ -343,25 +377,28 @@ fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
         .or(parse_literal(tokens))
 }
 
-fn parse_var_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {
+fn parse_var_declaration<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Statement, &'b [Token])> {
     let (_, tokens) = expect_token(tokens, TokenType::Var)?;
     let (identifier, tokens) = expect_maybe_token(tokens, TokenType::Identifier);
-    // TODO: recovery: pop tokens until a sensibe point
     if identifier.is_none() {
-        return Some((
-            Statement::Error(String::from("expected identifier")),
-            tokens,
-        ));
+        errors.push(ParseError {
+            message: String::from("expected identifier"),
+        });
+        let tokens = synchronize(tokens);
+        return Some((Statement::Error, tokens));
     }
     let identifier = identifier.unwrap();
     let (_, tokens) = expect_maybe_token(tokens, TokenType::Equal);
     let expr = parse_expression(tokens);
     if expr.is_none() {
-        // TODO: signal error, but continue
-        return Some((
-            Statement::Error(String::from("expected expression")),
-            tokens,
-        ));
+        errors.push(ParseError {
+            message: String::from("expected identifier"),
+        });
+        let tokens = synchronize(tokens);
+        return Some((Statement::Error, tokens));
     }
     let (expr, tokens) = expr.unwrap();
     let (_, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
@@ -405,11 +442,26 @@ fn parse_function_call(tokens: &[Token]) -> Option<(Expression, &[Token])> {
         tokens,
     ))
 }
-fn parse_function_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])> {
-    // TODO: needs synchronization
+fn parse_function_declaration<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Statement, &'b [Token])> {
     let (_, tokens) = expect_token(tokens, TokenType::Fun)?;
-    let (identifier, tokens) = expect_token(tokens, TokenType::Identifier)?;
-    let (_, tokens) = expect_maybe_token(tokens, TokenType::LeftParen);
+    let maybe_identifier = expect_token(tokens, TokenType::Identifier);
+    if maybe_identifier.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected identifier"),
+        });
+        let tokens = synchronize(tokens);
+        return Some((Statement::Error, tokens));
+    }
+    let (identifier, tokens) = maybe_identifier.unwrap();
+    let (left_paren, tokens) = expect_maybe_token(tokens, TokenType::LeftParen);
+    if left_paren.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected left paren"),
+        });
+    }
     let mut tokens = tokens;
     let mut arg_names: Vec<String> = Vec::new();
     while let Some((t, tokens_after_arg_name)) = expect_token(tokens, TokenType::Identifier) {
@@ -422,7 +474,7 @@ fn parse_function_declaration(tokens: &[Token]) -> Option<(Statement, &[Token])>
     let (_, tokens) = expect_maybe_token(tokens, TokenType::LeftBrace);
     let mut tokens = tokens;
     let mut statements: Vec<Statement> = Vec::new();
-    while let Some((statement, rest)) = parse_statement(tokens) {
+    while let Some((statement, rest)) = parse_statement(errors, tokens) {
         statements.push(statement);
         tokens = rest;
     }
@@ -442,18 +494,27 @@ fn parse_expression_statement(tokens: &[Token]) -> Option<(Statement, &[Token])>
     Some((Statement::FreeStandingExpression(Box::new(expr)), tokens))
 }
 
-fn parse_statement(tokens: &[Token]) -> Option<(Statement, &[Token])> {
-    parse_var_declaration(tokens)
-        .or(parse_variable_assignment(tokens))
-        .or(parse_expression_statement(tokens))
-        .or(parse_function_declaration(tokens))
+#[derive(Debug)]
+pub struct ParseError {
+    pub message: String,
 }
 
-pub fn parse(tokens: &[Token]) -> anyhow::Result<Vec<Statement>> {
+fn parse_statement<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Statement, &'b [Token])> {
+    parse_var_declaration(errors, tokens)
+        .or(parse_variable_assignment(tokens))
+        .or(parse_expression_statement(tokens))
+        .or(parse_function_declaration(errors, tokens))
+}
+
+pub fn parse(tokens: &[Token]) -> (Vec<Statement>, Vec<ParseError>) {
+    let mut errors: Vec<ParseError> = Vec::new();
     let mut result: Vec<Statement> = vec![];
     let mut current_tokens = tokens;
     loop {
-        match parse_statement(current_tokens) {
+        match parse_statement(&mut errors, current_tokens) {
             None => break,
             Some((statement, rest)) => {
                 result.push(statement);
@@ -461,5 +522,78 @@ pub fn parse(tokens: &[Token]) -> anyhow::Result<Vec<Statement>> {
             }
         }
     }
-    Ok(result)
+    (result, errors)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{parse::parse, scan::scan};
+
+    #[test]
+    fn test_parse_variable() {
+        let src = "var a = 1;";
+        let tokens = scan(src).expect("should be able to tokenize source");
+        let (ast, errors) = parse(&tokens);
+        insta::assert_debug_snapshot!(ast, @r###"
+        [
+            VariableDeclaration(
+                "a",
+                Literal(
+                    Number(
+                        1.0,
+                    ),
+                ),
+            ),
+        ]
+        "###);
+    }
+
+    #[test]
+    fn test_parse_variable_no_ident() {
+        let src = "var = 1;";
+        let tokens = scan(src).expect("should be able to tokenize source");
+        let (ast, errors) = parse(&tokens);
+        insta::assert_debug_snapshot!(ast, @r###"
+        [
+            Error,
+        ]
+        "###);
+        insta::assert_debug_snapshot!(errors, @r###"
+        [
+            ParseError {
+                message: "expected identifier",
+            },
+        ]
+        "###);
+    }
+
+    #[test]
+    fn test_parse_variable_recovery() {
+        let src = r###"
+        var = 1;
+        var b = 2;
+        "###;
+        let tokens = scan(src).expect("should be able to tokenize source");
+        let (ast, errors) = parse(&tokens);
+        insta::assert_debug_snapshot!(ast, @r###"
+        [
+            Error,
+            VariableAssignment(
+                "b",
+                Literal(
+                    Number(
+                        2.0,
+                    ),
+                ),
+            ),
+        ]
+        "###);
+        insta::assert_debug_snapshot!(errors, @r###"
+        [
+            ParseError {
+                message: "expected identifier",
+            },
+        ]
+        "###);
+    }
 }

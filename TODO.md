@@ -2,6 +2,7 @@
 
 ### Infrastructure
 - [ ] propagate errors from parsing
+- [ ] implement synchornization for all statements and expressions
 - [ ] add line + column information to tokens and expressions
 
 ### Language features
@@ -29,3 +30,5 @@
 ### Ecosystem
 - [ ] Language server that implements LSP
 - [ ] VSCode extension
+
+### Done

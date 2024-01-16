@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use anyhow::bail;
 use eval::{Environment, LooxReference};
 use parse::Expression;
 use rpds::HashTrieMap;
@@ -14,7 +15,10 @@ fn run(
     source: &str,
 ) -> anyhow::Result<(Environment, Option<LooxReference<Expression>>)> {
     let tokens = scan::scan(source)?;
-    let ast = parse::parse(&tokens).expect("should always succeed");
+    let (ast, errors) = parse::parse(&tokens);
+    if !errors.is_empty() {
+        bail!(format!("{:?}", errors));
+    }
     eval::eval(env, ast)
 }
 

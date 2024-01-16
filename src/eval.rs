@@ -187,7 +187,7 @@ fn eval_statement(
             let next_env = env.insert(name, function_expr.clone());
             Ok((next_env, function_expr))
         }
-        Statement::Error(err) => bail!(err),
+        Statement::Error => bail!("Cannot evaluate malformed expression"),
     }
 }
 
