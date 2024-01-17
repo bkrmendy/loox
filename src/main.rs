@@ -1,7 +1,7 @@
-use std::io::Write;
+use std::{cell::RefCell, io::Write, rc::Rc};
 
 use anyhow::bail;
-use eval::{Environment, LooxReference};
+use eval::{EnvPtr, LooxReference};
 use parse::Expression;
 use rpds::HashTrieMap;
 
@@ -10,10 +10,7 @@ mod parse;
 mod scan;
 mod utils;
 
-fn run(
-    env: Environment,
-    source: &str,
-) -> anyhow::Result<(Environment, Option<LooxReference<Expression>>)> {
+fn run(env: EnvPtr, source: &str) -> anyhow::Result<Option<LooxReference<Expression>>> {
     let tokens = scan::scan(source)?;
     let (ast, errors) = parse::parse(&tokens);
     if !errors.is_empty() {
@@ -24,13 +21,13 @@ fn run(
 
 fn run_file(path: &str) -> anyhow::Result<()> {
     let contents = std::fs::read_to_string(path)?;
-    let env: Environment = HashTrieMap::new();
+    let env: EnvPtr = Rc::new(RefCell::new(HashTrieMap::new()));
     let _ = run(env, &contents);
     Ok(())
 }
 
 fn run_prompt() -> anyhow::Result<()> {
-    let mut env: Environment = HashTrieMap::new();
+    let env: EnvPtr = Rc::new(RefCell::new(HashTrieMap::new()));
     loop {
         print!("> ");
         std::io::stdout().flush().unwrap();
@@ -41,13 +38,10 @@ fn run_prompt() -> anyhow::Result<()> {
         }
         let result = run(env.clone(), &buffer);
         match result {
-            Ok((next_env, Some(res))) => {
-                env = next_env;
+            Ok(Some(res)) => {
                 println!("<| {}", res.borrow());
-                println!("e| {:?}", env.keys().collect::<Vec<&String>>())
             }
-            Ok((next_env, None)) => {
-                env = next_env;
+            Ok(None) => {
                 print!("")
             }
             Err(err) => println!("<! {err}"),
@@ -73,19 +67,21 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
     use rpds::HashTrieMap;
 
-    use crate::{eval::Environment, run};
+    use crate::{eval::EnvPtr, run};
 
     fn run_expr_expect_ok(source: &str) -> String {
-        let env: Environment = HashTrieMap::new();
-        let (_, result) = run(env, source).expect("expected to be OK");
+        let env: EnvPtr = Rc::new(RefCell::new(HashTrieMap::new()));
+        let result = run(env, source).expect("expected to be OK");
         let expr = result.expect("Expected at least one expression");
         format!("{}", expr.borrow())
     }
 
     fn run_expr_expect_err(source: &str) -> String {
-        let env: Environment = HashTrieMap::new();
+        let env: EnvPtr = Rc::new(RefCell::new(HashTrieMap::new()));
         let result = run(env, source).unwrap_err();
         format!("{result}")
     }
@@ -368,16 +364,16 @@ mod tests {
     fn test_fibonacci() {
         let src = r###"
         fun fib(n) {
-            if n <= 0 {
-                0
+            if n <= 1 {
+                n
             } else {
-                fib(n - 1) + fib(n - 2)
+                fib(n - 2) + fib(n - 1)
             }
         }
 
         fib(5)
         "###;
         let result = run_expr_expect_ok(src);
-        insta::assert_debug_snapshot!(result, @r###""false""###);
+        insta::assert_debug_snapshot!(result, @r###""5""###);
     }
 }

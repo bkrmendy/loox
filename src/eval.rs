@@ -128,71 +128,79 @@ fn eval_binary_op(
 }
 
 pub fn eval_expression(
-    env: Environment,
+    env: EnvPtr,
     expression: Expression,
-) -> anyhow::Result<(Environment, LooxReference<Expression>)> {
+) -> anyhow::Result<LooxReference<Expression>> {
     // TODO: it's (maybe) not really necessary to return an env
     match expression {
         Expression::Literal(Literal::Identifier(name)) => {
-            let value = env
+            let env_for_lookup = env.borrow();
+            let value = env_for_lookup
                 .get(&name)
                 .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?;
-            Ok((env.clone(), value.clone()))
+            Ok(value.clone())
         }
-        Expression::Literal(_) => Ok((env.clone(), make_loox_ref(expression))),
+        Expression::Literal(_) => Ok(make_loox_ref(expression)),
         Expression::Grouping(expr) => eval_expression(env, *expr),
         Expression::Unary(op, expr) => {
-            let (env, e) = eval_expression(env, *expr)?;
+            let e = eval_expression(env, *expr)?;
             let result = eval_unary_op(op, &e.borrow())?;
-            Ok((env, make_loox_ref(result)))
+            Ok(make_loox_ref(result))
         }
         Expression::Binary(op, left, right) => {
-            let (env, left_evaled) = eval_expression(env, *left)?;
-            let (env, right_evaled) = eval_expression(&env, *right)?;
+            let left_evaled = eval_expression(env.clone(), *left)?;
+            let right_evaled = eval_expression(env.clone(), *right)?;
             let result = eval_binary_op(op, &left_evaled.borrow(), &right_evaled.borrow())?;
-            Ok((env, make_loox_ref(result)))
+            Ok(make_loox_ref(result))
         }
         Expression::FunctionLiteral(_) => todo!(),
         Expression::FunctionCall(name, args) => {
-            let fn_def = env
-                .get(&name)
-                .ok_or(anyhow::Error::msg(format!("Cannot find function: {name}")))?;
+            let fn_def = {
+                let env_for_lookup = env.borrow();
+                env_for_lookup
+                    .get(&name)
+                    .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?
+                    .clone()
+            };
             let fn_def = match fn_def.borrow().clone() {
                 // TODO .clone() :(
                 Expression::FunctionLiteral(literal) => anyhow::Ok(literal),
                 _ => bail!(format!("{name} is not a function")),
             }?;
-            let mut env_for_function = fn_def.enclosing_env.clone();
+            let env_for_function = Rc::new(RefCell::new(fn_def.enclosing_env.borrow().clone()));
             for (arg_name, arg_value) in zip(fn_def.params.iter(), args) {
-                let (_, value) = eval_expression(env, arg_value)?;
-                env_for_function = env_for_function.insert(arg_name.clone(), value);
+                let value = eval_expression(env.clone(), arg_value)?;
+                let next_env = env_for_function.borrow().insert(arg_name.clone(), value);
+                *env_for_function.borrow_mut() = next_env;
             }
-            let (_, result) = eval(env_for_function, fn_def.body.clone())?;
+            let result = eval(env_for_function, fn_def.body.clone())?;
             let result = result.ok_or(anyhow::Error::msg("missing return value"))?;
-            Ok((env.clone(), result))
+            Ok(result)
         }
         Expression::Error(err) => bail!(err),
     }
 }
 
-fn eval_statement(
-    env: &Environment,
-    statement: Statement,
-) -> anyhow::Result<(Environment, LooxReference<Expression>)> {
+fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxReference<Expression>> {
     // TODO: returing the expression (maybe) is not necessary
     match statement {
         Statement::VariableDeclaration(name, expr) => {
-            let (env, val) = eval_expression(env, *expr)?;
-            let next_env = env.insert(name, val.clone());
-            Ok((next_env, val))
+            let val = eval_expression(env.clone(), *expr)?;
+            let next_env = { env.borrow().insert(name, val.clone()) };
+            *env.borrow_mut() = next_env;
+            Ok(val.clone())
         }
         Statement::VariableAssignment(name, expr) => {
-            let (env, evaled) = eval_expression(env, *expr)?;
-            let value = env
-                .get(&name)
-                .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?;
+            let evaled = eval_expression(env.clone(), *expr)?;
+            let value = {
+                let env_for_lookup = env.borrow();
+                env_for_lookup
+                    .get(&name)
+                    .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?
+                    .clone()
+            };
             *value.borrow_mut() = evaled.borrow().clone();
-            Ok((env.clone(), value.clone()))
+            Ok(value.clone())
         }
         Statement::FreeStandingExpression(expr) => eval_expression(env, *expr),
         Statement::FunctionDeclaration(FunctionDeclarationSyntax { name, params, body }) => {
@@ -201,11 +209,12 @@ fn eval_statement(
                 body,
                 enclosing_env: env.clone(),
             }));
-            let next_elesaving nv = env.insert(name, function_expr.clone());
-            Ok((next_env, function_expr))
+            let next_env = { env.borrow().insert(name, function_expr.clone()) };
+            *env.borrow_mut() = next_env;
+            Ok(function_expr)
         }
         Statement::If(test, then_part, else_part) => {
-            let (env, test_result) = eval_expression(env, *test)?;
+            let test_result = eval_expression(env.clone(), *test)?;
             let check_test_result = match test_result.borrow().clone() {
                 Expression::Literal(Literal::True) => Ok(true),
                 Expression::Literal(Literal::False) => Ok(false),
@@ -213,38 +222,37 @@ fn eval_statement(
             }?;
 
             if check_test_result {
-                let (env, result) = eval(env, then_part)?;
+                let env_for_scope = Rc::new(RefCell::new(env.borrow().clone()));
+                let result = eval(env_for_scope, then_part)?;
                 let result = result.ok_or(anyhow::Error::msg("If has empty body"))?;
-                return Ok((env, result));
+                return Ok(result);
             }
 
             if else_part.is_some() && !check_test_result {
+                let env_for_scope = Rc::new(RefCell::new(env.borrow().clone()));
                 let else_part = else_part.unwrap();
-                let (env, result) = eval(env, else_part)?;
+                let result = eval(env_for_scope, else_part)?;
                 let result = result.ok_or(anyhow::Error::msg("else has empty body"))?;
-                return Ok((env, result));
+                return Ok(result);
             }
 
             // TODO: this is a giant kludge, delete it when `eval_statement` no longer returns an expression
-            Ok((env, make_loox_ref(Expression::Literal(Literal::Nil))))
+            Ok(make_loox_ref(Expression::Literal(Literal::Nil)))
         }
         Statement::Error => bail!("Cannot evaluate malformed expression"),
     }
 }
 
 pub fn eval(
-    env: Environment,
+    env: EnvPtr,
     statements: Vec<Statement>,
-) -> anyhow::Result<(Environment, Option<LooxReference<Expression>>)> {
-    let mut current_env: Environment = env;
+) -> anyhow::Result<Option<LooxReference<Expression>>> {
     let mut last_result: Option<LooxReference<Expression>> = None;
 
     for statement in statements {
-        let (next_env, result) = eval_statement(&current_env, statement)?;
-
-        current_env = next_env;
+        let result = eval_statement(env.clone(), statement)?;
         last_result = Some(result);
     }
 
-    Ok((current_env, last_result))
+    Ok(last_result)
 }

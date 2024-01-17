@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    eval::Environment,
+    eval::EnvPtr,
     scan::{Token, TokenLiteral, TokenType},
 };
 
@@ -94,7 +94,7 @@ pub struct FunctionLiteralSyntax {
     pub params: Vec<String>,
     // `{` + expression* + `}`
     pub body: Vec<Statement>,
-    pub enclosing_env: Environment,
+    pub enclosing_env: EnvPtr,
 }
 
 #[derive(Debug, Clone)]
