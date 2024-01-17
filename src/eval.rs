@@ -1,4 +1,4 @@
-use std::{cell::RefCell, iter::zip, rc::Rc};
+use std::{cell::RefCell, iter::zip, ops::Deref, rc::Rc};
 
 use anyhow::{bail, Ok};
 use rpds::HashTrieMap;
@@ -196,7 +196,28 @@ pub fn eval_expression(
             let result = result.ok_or(anyhow::Error::msg("missing return value"))?;
             Ok(result)
         }
-        Expression::Error(err) => bail!(err),
+        Expression::PropertyAccess(name, prop) => {
+            let value = {
+                let env_for_lookup = env.borrow();
+                env_for_lookup
+                    .get(&name)
+                    .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?
+                    .clone()
+            };
+            let value = match value.borrow().clone() {
+                // TODO .clone() :(
+                Expression::Literal(Literal::Object(object)) => anyhow::Ok(object),
+                _ => bail!(format!("{name} is not a function")),
+            }?;
+
+            let expr = value
+                .get(&prop)
+                .map(|e| e.deref().clone())
+                .unwrap_or(Expression::Literal(Literal::Nil));
+
+            Ok(make_loox_ref(expr))
+        }
+        Expression::Error => bail!("Malformed expression"),
     }
 }
 
@@ -205,8 +226,36 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
     match statement {
         Statement::VariableDeclaration(name, expr) => {
             let val = eval_expression(env.clone(), *expr)?;
+            let has_value_semantics = match val.borrow().clone() {
+                // TODO .clone() :(
+                Expression::Literal(Literal::Object(_)) => false,
+                _ => true,
+            };
+            let val = if has_value_semantics {
+                Rc::new(RefCell::new(val.borrow().clone()))
+            } else {
+                val
+            };
             let next_env = { env.borrow().insert(name, val) };
             *env.borrow_mut() = next_env;
+            Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
+        }
+        Statement::PropertyAssignment(name, prop, expr) => {
+            let evaled = eval_expression(env.clone(), *expr)?;
+            let value = {
+                let env_for_lookup = env.borrow();
+                env_for_lookup
+                    .get(&name)
+                    .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?
+                    .clone()
+            };
+            let mut object = match value.borrow().clone() {
+                // TODO .clone() :(
+                Expression::Literal(Literal::Object(object)) => anyhow::Ok(object),
+                _ => bail!(format!("{name} is not a function")),
+            }?;
+            object.insert(prop, Box::new(evaled.borrow().clone()));
+            *value.borrow_mut() = Expression::Literal(Literal::Object(object));
             Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
         }
         Statement::VariableAssignment(name, expr) => {
@@ -217,6 +266,16 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
                     .get(&name)
                     .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?
                     .clone()
+            };
+            let has_value_semantics = match evaled.borrow().clone() {
+                // TODO .clone() :(
+                Expression::Literal(Literal::Object(_)) => false,
+                _ => true,
+            };
+            let evaled = if has_value_semantics {
+                Rc::new(RefCell::new(evaled.borrow().clone()))
+            } else {
+                evaled
             };
             *value.borrow_mut() = evaled.borrow().clone();
             Ok(make_loox_ref(Expression::Literal(Literal::Unit)))

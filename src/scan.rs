@@ -12,6 +12,7 @@ pub enum TokenType {
     Minus,
     Plus,
     Semicolon,
+    Colon,
     Slash,
     Star,
 
@@ -209,6 +210,7 @@ fn scan_token(source: &str, line: usize) -> (ScanResult, &str) {
         '.' => Some(mk_single_char_tok(TokenType::Dot)),
         '-' => Some(mk_single_char_tok(TokenType::Minus)),
         '+' => Some(mk_single_char_tok(TokenType::Plus)),
+        ':' => Some(mk_single_char_tok(TokenType::Colon)),
         ';' => Some(mk_single_char_tok(TokenType::Semicolon)),
         '*' => Some(mk_single_char_tok(TokenType::Star)),
         '!' => match_char('=').map_or(Some(mk_single_char_tok(TokenType::Bang)), |_| {

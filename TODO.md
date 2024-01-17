@@ -7,12 +7,9 @@
 ### Infrastructure
 - [ ] implement synchronization and error signaling for all statements and expressions
 - [ ] add line + column information to tokens and expressions
+- [ ] create a sep_by function for parameter lists and object literals
 
 ### Language features
-- [ ] parse/eval objects
-- [ ] make sure only objects have reference semantics
-- [ ] make sure numbers/strings etc have value semantics
-
 - [ ] parse/eval scopes
 - [ ] parse/eval chained if/else if/else
 
@@ -21,7 +18,7 @@
 
 ### VM
 - [ ] implement the compiler
-- [ ] implement the byte interpreter
+- [ ] implement the bytecode interpreter
 
 ### Standard library
 - [ ] print, read from terminal, file
@@ -38,6 +35,10 @@
 - [ ] VSCode extension
 
 ### Done
+- [x] make sure only objects have reference semantics
+- [x] make sure numbers/strings etc have value semantics
+- [x] parse/eval objects
+- [x] parse/eval property accesses
 - [x] parse/eval while loops
 - [x] propagate errors from parsing
 - [x] parse/eval ifs

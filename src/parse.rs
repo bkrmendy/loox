@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::BTreeMap, fmt::Display};
 
 use crate::{
     eval::EnvPtr,
@@ -7,6 +7,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Literal {
+    Object(BTreeMap<String, Box<Expression>>),
     Number(f64),
     String(String),
     Identifier(String),
@@ -19,6 +20,15 @@ pub enum Literal {
 impl Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Literal::Object(object) => {
+                let innards: String = object
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                write!(f, "{{{innards}}}")
+            }
             Literal::Number(number) => write!(f, "{number}"),
             Literal::String(string) => write!(f, "{string}"),
             Literal::Identifier(name) => write!(f, "{name}"),
@@ -105,6 +115,7 @@ pub enum Statement {
     VariableDeclaration(String, Box<Expression>),
     // name `=` expression `;`
     VariableAssignment(String, Box<Expression>),
+    PropertyAssignment(String, String, Box<Expression>),
     // see `FunctionSyntax`
     FunctionDeclaration(FunctionDeclarationSyntax),
     // here so that expressions can be typed in the repl
@@ -129,8 +140,10 @@ pub enum Expression {
     FunctionCall(String, Vec<Expression>),
     // "lambda" function
     FunctionLiteral(FunctionLiteralSyntax),
+    // object.prop
+    PropertyAccess(String, String),
     // represent errors
-    Error(String),
+    Error,
 }
 
 impl Display for Expression {
@@ -140,13 +153,14 @@ impl Display for Expression {
             Expression::Unary(op, e) => write!(f, "{op}{e}"),
             Expression::Literal(literal) => write!(f, "{literal}"),
             Expression::Binary(op, left, right) => write!(f, "({op} {left} {right})"),
-            Expression::Error(e) => write!(f, "[{e}]"),
+            Expression::Error => write!(f, "[error]"),
             Expression::FunctionCall(name, args) => {
                 let param_list: Vec<String> = args.iter().map(|a| a.to_string()).collect();
                 let param_list = param_list.join(", ");
                 write!(f, "{name}({param_list})")
             }
             Expression::FunctionLiteral(_) => write!(f, "#anonymous function"),
+            Expression::PropertyAccess(name, prop) => write!(f, "{name}.{prop}"),
         }
     }
 }
@@ -250,7 +264,75 @@ fn parse_unit(tokens: &[Token]) -> Option<(Expression, &[Token])> {
     Some((Expression::Literal(Literal::Unit), tokens))
 }
 
-fn parse_grouping(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+fn parse_object<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Expression, &'b [Token])> {
+    let (_, tokens) = expect_token(tokens, TokenType::LeftBrace)?;
+    let mut tokens = tokens;
+    let mut k_v_pairs: Vec<(String, Box<Expression>)> = Vec::new();
+    while let Some((
+        Token {
+            token_type: TokenType::Identifier,
+            lexeme,
+            ..
+        },
+        rest,
+    )) = expect_token(tokens, TokenType::Identifier)
+    {
+        let prop_name = lexeme.clone();
+        let (maybe_colon, rest) = expect_maybe_token(rest, TokenType::Colon);
+        if maybe_colon.is_none() {
+            errors.push(ParseError {
+                message: String::from("Expected colon"),
+            })
+        }
+        let maybe_expr = parse_expression(errors, rest);
+        if maybe_expr.is_none() {
+            errors.push(ParseError {
+                message: String::from("Expected expression"),
+            });
+            let rest: &[Token] = synchronize(rest);
+            return Some((Expression::Error, rest));
+        }
+        let (expr, rest) = maybe_expr.unwrap();
+        k_v_pairs.push((prop_name, Box::new(expr)));
+        let (_, rest) = expect_maybe_token(rest, TokenType::Comma);
+        tokens = rest
+    }
+
+    let (_, tokens) = expect_maybe_token(tokens, TokenType::RightBrace);
+
+    let object: BTreeMap<String, Box<Expression>> = BTreeMap::from_iter(k_v_pairs);
+    Some((Expression::Literal(Literal::Object(object)), tokens))
+}
+
+fn parse_property_access<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Expression, &'b [Token])> {
+    let (object_name, tokens) = expect_token(tokens, TokenType::Identifier)?;
+    let (_, tokens) = expect_token(tokens, TokenType::Dot)?;
+    let maybe_prop = expect_token(tokens, TokenType::Identifier);
+    if maybe_prop.is_none() {
+        errors.push(ParseError {
+            message: String::from("Expected identifier"),
+        });
+        let tokens: &[Token] = synchronize(tokens);
+        return Some((Expression::Error, tokens));
+    }
+    let (prop, tokens) = maybe_prop.unwrap();
+
+    Some((
+        Expression::PropertyAccess(object_name.lexeme.clone(), prop.lexeme.clone()),
+        tokens,
+    ))
+}
+
+fn parse_grouping<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Expression, &'b [Token])> {
     if tokens.is_empty() {
         return None;
     }
@@ -260,7 +342,7 @@ fn parse_grouping(tokens: &[Token]) -> Option<(Expression, &[Token])> {
             token_type: TokenType::LeftParen,
             ..
         } => {
-            let (expr, rest) = parse_expression(&tokens[1..])?;
+            let (expr, rest) = parse_expression(errors, &tokens[1..])?;
             // TODO: signal the missing error here
             let (_, rest) = expect_maybe_token(rest, TokenType::RightParen);
             Some((Expression::Grouping(Box::new(expr)), rest))
@@ -269,7 +351,10 @@ fn parse_grouping(tokens: &[Token]) -> Option<(Expression, &[Token])> {
     }
 }
 
-fn parse_unary_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+fn parse_unary_expression<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Expression, &'b [Token])> {
     if tokens.is_empty() {
         return None;
     }
@@ -279,14 +364,14 @@ fn parse_unary_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
             token_type: TokenType::Minus,
             ..
         } => {
-            let (expr, rest) = parse_expression(&tokens[1..])?;
+            let (expr, rest) = parse_expression(errors, &tokens[1..])?;
             Some((Expression::Unary(UnaryOp::Minus, Box::new(expr)), rest))
         }
         Token {
             token_type: TokenType::Bang,
             ..
         } => {
-            let (expr, rest) = parse_expression(&tokens[1..])?;
+            let (expr, rest) = parse_expression(errors, &tokens[1..])?;
             Some((Expression::Unary(UnaryOp::Bang, Box::new(expr)), rest))
         }
         _ => None,
@@ -327,18 +412,29 @@ fn precedence(op: &BinaryOp) -> u8 {
     }
 }
 
-fn parse_binary_expr_operand(tokens: &[Token]) -> Option<(Expression, &[Token])> {
-    parse_function_call(tokens)
-        .or(parse_grouping(tokens))
-        .or(parse_unary_expression(tokens))
+fn parse_binary_expr_operand<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Expression, &'b [Token])> {
+    parse_function_call(errors, tokens)
+        .or(parse_grouping(errors, tokens))
+        .or(parse_unary_expression(errors, tokens))
+        .or(parse_property_access(errors, tokens))
         .or(parse_literal(tokens))
 }
 
-fn parse_binary_with_recovery(tokens: &[Token], current_prec: u8) -> (Expression, &[Token]) {
-    let next = parse_binary_expr_operand(tokens);
+fn parse_binary_with_recovery<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+    current_prec: u8,
+) -> (Expression, &'b [Token]) {
+    let next = parse_binary_expr_operand(errors, tokens);
 
     if next.is_none() {
-        return (Expression::Error(String::from("Expected operand")), tokens);
+        errors.push(ParseError {
+            message: String::from("Expected operand"),
+        });
+        return (Expression::Error, tokens);
     }
 
     let (mut expr, mut rest) = next.unwrap();
@@ -354,9 +450,13 @@ fn parse_binary_with_recovery(tokens: &[Token], current_prec: u8) -> (Expression
         if prec < current_prec {
             return (expr, rest);
         }
-        let maybe_next_op = parse_binary_contd(rest_after_op, prec);
+        let maybe_next_op = parse_binary_contd(errors, rest_after_op, prec);
         if maybe_next_op.is_none() {
-            return (Expression::Error(String::from("Expected operand")), rest);
+            errors.push(ParseError {
+                message: String::from("Expected operand"),
+            });
+            let rest = synchronize(rest);
+            return (Expression::Error, rest);
         }
         let (rhs, rest_after_rhs) = maybe_next_op.unwrap();
         expr = Expression::Binary(op, Box::new(expr), Box::new(rhs));
@@ -364,27 +464,40 @@ fn parse_binary_with_recovery(tokens: &[Token], current_prec: u8) -> (Expression
     }
 }
 
-fn parse_binary_contd(tokens: &[Token], current_prec: u8) -> Option<(Expression, &[Token])> {
-    let (expr, rest) = parse_binary_expr_operand(tokens)?;
+fn parse_binary_contd<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+    current_prec: u8,
+) -> Option<(Expression, &'b [Token])> {
+    let (expr, rest) = parse_binary_expr_operand(errors, tokens)?;
     let maybe_op = parse_binary_op(rest);
     if maybe_op.is_none() {
         return Some((expr, rest));
     }
-    Some(parse_binary_with_recovery(tokens, current_prec))
+    Some(parse_binary_with_recovery(errors, tokens, current_prec))
 }
 
-fn parse_binary(tokens: &[Token], current_prec: u8) -> Option<(Expression, &[Token])> {
-    let (_, rest) = parse_binary_expr_operand(tokens)?;
+fn parse_binary<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+    current_prec: u8,
+) -> Option<(Expression, &'b [Token])> {
+    let (_, rest) = parse_binary_expr_operand(errors, tokens)?;
     let _ = parse_binary_op(rest)?;
-    Some(parse_binary_with_recovery(tokens, current_prec))
+    Some(parse_binary_with_recovery(errors, tokens, current_prec))
 }
 
-fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
-    parse_binary(tokens, 0)
-        .or(parse_function_call(tokens))
-        .or(parse_unary_expression(tokens))
-        .or(parse_grouping(tokens))
+fn parse_expression<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Expression, &'b [Token])> {
+    parse_binary(errors, tokens, 0)
+        .or(parse_property_access(errors, tokens))
+        .or(parse_function_call(errors, tokens))
+        .or(parse_unary_expression(errors, tokens))
+        .or(parse_grouping(errors, tokens))
         .or(parse_literal(tokens))
+        .or(parse_object(errors, tokens))
         .or(parse_unit(tokens))
 }
 
@@ -403,7 +516,7 @@ fn parse_var_declaration<'a: 'b, 'b>(
     }
     let identifier = identifier.unwrap();
     let (_, tokens) = expect_maybe_token(tokens, TokenType::Equal);
-    let expr = parse_expression(tokens);
+    let expr = parse_expression(errors, tokens);
     if expr.is_none() {
         errors.push(ParseError {
             message: String::from("expected identifier"),
@@ -419,35 +532,85 @@ fn parse_var_declaration<'a: 'b, 'b>(
     ))
 }
 
-fn parse_variable_assignment(tokens: &[Token]) -> Option<(Statement, &[Token])> {
+fn parse_variable_assignment<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Statement, &'b [Token])> {
     let (identifier, tokens) = expect_token(tokens, TokenType::Identifier)?;
     let (_, tokens) = expect_token(tokens, TokenType::Equal)?;
-    let (expr, tokens) = parse_expression(tokens)?; // TODO; recovery
-    let (_, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
+    let maybe_expr = parse_expression(errors, tokens);
+    if maybe_expr.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected expression"),
+        });
+        let tokens = synchronize(tokens);
+        return Some((Statement::Error, tokens));
+    }
+    let (expr, tokens) = maybe_expr.unwrap();
+    let (maybe_semicolon, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
+    if maybe_semicolon.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected semicolon"),
+        });
+    }
     Some((
         Statement::VariableAssignment(identifier.lexeme.clone(), Box::new(expr)),
         tokens,
     ))
 }
 
-fn parse_function_call(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+fn parse_property_assignment<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Statement, &'b [Token])> {
+    let (object_name, tokens) = expect_token(tokens, TokenType::Identifier)?;
+    let (_, tokens) = expect_token(tokens, TokenType::Dot)?;
+    let (prop_name, tokens) = expect_token(tokens, TokenType::Identifier)?;
+    let (_, tokens) = expect_token(tokens, TokenType::Equal)?;
+    let maybe_expr = parse_expression(errors, tokens);
+    if maybe_expr.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected expression"),
+        });
+        let tokens = synchronize(tokens);
+        return Some((Statement::Error, tokens));
+    }
+    let (expr, tokens) = maybe_expr.unwrap();
+    let (maybe_semicolon, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
+    if maybe_semicolon.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected semicolon"),
+        });
+    }
+    Some((
+        Statement::PropertyAssignment(
+            object_name.lexeme.clone(),
+            prop_name.lexeme.clone(),
+            Box::new(expr),
+        ),
+        tokens,
+    ))
+}
+
+fn parse_function_call<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Expression, &'b [Token])> {
     let (identifier, tokens) = expect_token(tokens, TokenType::Identifier)?;
     let (_, tokens) = expect_token(tokens, TokenType::LeftParen)?;
     let mut args: Vec<Expression> = Vec::new();
     let mut tokens = tokens;
-    while let Some((expr, tokens_after_expression)) = parse_expression(tokens) {
+    while let Some((expr, tokens_after_expression)) = parse_expression(errors, tokens) {
         args.push(expr);
         let (_, tokens_after_comma) = expect_maybe_token(tokens_after_expression, TokenType::Comma);
         tokens = tokens_after_comma
     }
-    let (_, tokens) = expect_maybe_token(tokens, TokenType::RightParen);
-    // if left_paren.is_none() {
-    //     // TODO: signal error, but continue
-    //     return Some((
-    //         Expression::Error(String::from("expected expression")),
-    //         tokens,
-    //     ));
-    // }
+    let (left_paren, tokens) = expect_maybe_token(tokens, TokenType::RightParen);
+    if left_paren.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected expression"),
+        });
+    }
     Some((
         Expression::FunctionCall(identifier.lexeme.clone(), args),
         tokens,
@@ -499,8 +662,11 @@ fn parse_function_declaration<'a: 'b, 'b>(
     Some((Statement::FunctionDeclaration(function_definition), tokens))
 }
 
-fn parse_expression_statement(tokens: &[Token]) -> Option<(Statement, &[Token])> {
-    let (expr, tokens) = parse_expression(tokens)?;
+fn parse_expression_statement<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Statement, &'b [Token])> {
+    let (expr, tokens) = parse_expression(errors, tokens)?;
     let (_, tokens) = expect_maybe_token(tokens, TokenType::Semicolon);
     Some((Statement::FreeStandingExpression(Box::new(expr)), tokens))
 }
@@ -510,7 +676,7 @@ fn parse_if_statement<'a: 'b, 'b>(
     tokens: &'b [Token],
 ) -> Option<(Statement, &'b [Token])> {
     let (_, tokens) = expect_token(tokens, TokenType::IF)?;
-    let maybe_test = parse_expression(tokens);
+    let maybe_test = parse_expression(errors, tokens);
     if maybe_test.is_none() {
         errors.push(ParseError {
             message: String::from("expected identifier"),
@@ -575,7 +741,7 @@ fn parse_while_statement<'a: 'b, 'b>(
     tokens: &'b [Token],
 ) -> Option<(Statement, &'b [Token])> {
     let (_, tokens) = expect_token(tokens, TokenType::While)?;
-    let maybe_test = parse_expression(tokens);
+    let maybe_test = parse_expression(errors, tokens);
     if maybe_test.is_none() {
         errors.push(ParseError {
             message: String::from("expected identifier"),
@@ -618,8 +784,9 @@ fn parse_statement<'a: 'b, 'b>(
     parse_var_declaration(errors, tokens)
         .or(parse_if_statement(errors, tokens))
         .or(parse_while_statement(errors, tokens))
-        .or(parse_variable_assignment(tokens))
-        .or(parse_expression_statement(tokens))
+        .or(parse_property_assignment(errors, tokens))
+        .or(parse_variable_assignment(errors, tokens))
+        .or(parse_expression_statement(errors, tokens))
         .or(parse_function_declaration(errors, tokens))
 }
 
