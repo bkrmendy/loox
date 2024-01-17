@@ -18,13 +18,12 @@
 - [ ] parse/eval scopes
 - [ ] parse/eval chained if/else if/else
 
-- [ ] [BUG] recursive functions don't work
 - [ ] add support for function literals
 - [ ] add support for return statements and clarify trailing statement
 
 ### VM
 - [ ] implement the compiler
-- [ ] implement the interpreter
+- [ ] implement the byte interpreter
 
 ### Standard library
 - [ ] print, read from terminal, file
@@ -43,3 +42,4 @@
 ### Done
 - [x] propagate errors from parsing
 - [x] parse/eval ifs
+- [x] [BUG] recursive functions don't work

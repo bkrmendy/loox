@@ -13,6 +13,7 @@ pub enum Literal {
     True,
     False,
     Nil,
+    Unit,
 }
 
 impl Display for Literal {
@@ -24,6 +25,7 @@ impl Display for Literal {
             Literal::True => write!(f, "true"),
             Literal::False => write!(f, "false"),
             Literal::Nil => write!(f, "nil"),
+            Literal::Unit => write!(f, "()"),
         }
     }
 }
@@ -241,6 +243,12 @@ fn parse_literal(tokens: &[Token]) -> Option<(Expression, &[Token])> {
     }
 }
 
+fn parse_unit(tokens: &[Token]) -> Option<(Expression, &[Token])> {
+    let (_, tokens) = expect_token(tokens, TokenType::LeftParen)?;
+    let (_, tokens) = expect_token(tokens, TokenType::RightParen)?;
+    Some((Expression::Literal(Literal::Unit), tokens))
+}
+
 fn parse_grouping(tokens: &[Token]) -> Option<(Expression, &[Token])> {
     if tokens.is_empty() {
         return None;
@@ -376,6 +384,7 @@ fn parse_expression(tokens: &[Token]) -> Option<(Expression, &[Token])> {
         .or(parse_unary_expression(tokens))
         .or(parse_grouping(tokens))
         .or(parse_literal(tokens))
+        .or(parse_unit(tokens))
 }
 
 fn parse_var_declaration<'a: 'b, 'b>(

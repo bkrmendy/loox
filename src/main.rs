@@ -287,6 +287,7 @@ mod tests {
             fun add(b) {
                 a + b
             }
+            add
         }
 
         var add2 = adder(2)

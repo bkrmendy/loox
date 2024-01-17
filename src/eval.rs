@@ -186,9 +186,9 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
     match statement {
         Statement::VariableDeclaration(name, expr) => {
             let val = eval_expression(env.clone(), *expr)?;
-            let next_env = { env.borrow().insert(name, val.clone()) };
+            let next_env = { env.borrow().insert(name, val) };
             *env.borrow_mut() = next_env;
-            Ok(val.clone())
+            Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
         }
         Statement::VariableAssignment(name, expr) => {
             let evaled = eval_expression(env.clone(), *expr)?;
@@ -200,7 +200,7 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
                     .clone()
             };
             *value.borrow_mut() = evaled.borrow().clone();
-            Ok(value.clone())
+            Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
         }
         Statement::FreeStandingExpression(expr) => eval_expression(env, *expr),
         Statement::FunctionDeclaration(FunctionDeclarationSyntax { name, params, body }) => {
@@ -209,9 +209,9 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
                 body,
                 enclosing_env: env.clone(),
             }));
-            let next_env = { env.borrow().insert(name, function_expr.clone()) };
+            let next_env = { env.borrow().insert(name, function_expr) };
             *env.borrow_mut() = next_env;
-            Ok(function_expr)
+            Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
         }
         Statement::If(test, then_part, else_part) => {
             let test_result = eval_expression(env.clone(), *test)?;
@@ -236,8 +236,7 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
                 return Ok(result);
             }
 
-            // TODO: this is a giant kludge, delete it when `eval_statement` no longer returns an expression
-            Ok(make_loox_ref(Expression::Literal(Literal::Nil)))
+            Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
         }
         Statement::Error => bail!("Cannot evaluate malformed expression"),
     }
