@@ -43,7 +43,8 @@ fn run_prompt() -> anyhow::Result<()> {
         match result {
             Ok((next_env, Some(res))) => {
                 env = next_env;
-                println!("<| {}", res.borrow())
+                println!("<| {}", res.borrow());
+                println!("e| {:?}", env.keys().collect::<Vec<&String>>())
             }
             Ok((next_env, None)) => {
                 env = next_env;
@@ -192,6 +193,16 @@ mod tests {
     }
 
     #[test]
+    fn test_string_var() {
+        let src = r###"
+        var a = "hello";
+        a
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""hello""###);
+    }
+
+    #[test]
     fn test_variables_boolean_op() {
         let src = r###"
         var a = true;
@@ -287,5 +298,86 @@ mod tests {
         "###;
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""5""###);
+    }
+
+    #[test]
+    fn test_if_expression() {
+        let src = r###"
+        var a = -4
+        if a < 0 {
+            a = 0
+        }
+
+        a
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""0""###);
+    }
+
+    #[test]
+    fn test_if_else_expression() {
+        let src = r###"
+        var a = 7
+        if a < 0 {
+            a = 0
+        } else {
+            a = 10
+        }
+
+        a
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""10""###);
+    }
+
+    #[test]
+    fn test_min_function() {
+        let src = r###"
+        fun min(a, b) {
+            if a < b {
+                a
+            } else {
+                b
+            }
+        }
+
+        min(2, 7)
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""2""###);
+    }
+
+    #[test]
+    fn test_greeting() {
+        let src = r###"
+        fun greet(morning) {
+            if morning {
+                "Good morning!"
+            } else {
+                "Hello there!"
+            }
+        }
+
+        greet(true) == greet(false)
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""false""###);
+    }
+
+    #[test]
+    fn test_fibonacci() {
+        let src = r###"
+        fun fib(n) {
+            if n <= 0 {
+                0
+            } else {
+                fib(n - 1) + fib(n - 2)
+            }
+        }
+
+        fib(5)
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 }

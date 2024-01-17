@@ -14,6 +14,7 @@ fn make_loox_ref<T>(t: T) -> LooxReference<T> {
 }
 
 pub type Environment = HashTrieMap<String, LooxReference<Expression>>;
+pub type EnvPtr = Rc<RefCell<Environment>>;
 
 fn eval_unary_op(op: UnaryOp, expression: &Expression) -> anyhow::Result<Expression> {
     match (op, expression) {
@@ -43,13 +44,31 @@ fn do_number_op(
     }
 }
 
-fn do_number_comparison(
+fn do_number_bool_op(
     left: &Expression,
     right: &Expression,
     f: fn(&f64, &f64) -> bool,
 ) -> anyhow::Result<Expression> {
     match (left, right) {
         (Expression::Literal(Literal::Number(a)), Expression::Literal(Literal::Number(b))) => {
+            let result = if f(a, b) {
+                Literal::True
+            } else {
+                Literal::False
+            };
+            Ok(Expression::Literal(result))
+        }
+        _ => bail!(format!("not numbers")),
+    }
+}
+
+fn do_string_bool_op(
+    left: &Expression,
+    right: &Expression,
+    f: fn(&String, &String) -> bool,
+) -> anyhow::Result<Expression> {
+    match (left, right) {
+        (Expression::Literal(Literal::String(a)), Expression::Literal(Literal::String(b))) => {
             let result = if f(a, b) {
                 Literal::True
             } else {
@@ -93,25 +112,23 @@ fn eval_binary_op(
         BinaryOp::Minus => do_number_op(left, right, |l, r| l - r),
         BinaryOp::Times => do_number_op(left, right, |l, r| l * r),
         BinaryOp::Div => do_number_op(left, right, |l, r| l / r),
-        BinaryOp::Gt => do_number_comparison(left, right, |l, r| l >= r),
-        BinaryOp::Gte => do_number_comparison(left, right, |l, r| l > r),
-        BinaryOp::Lt => do_number_comparison(left, right, |l, r| l < r),
-        BinaryOp::Lte => do_number_comparison(left, right, |l, r| l <= r),
+        BinaryOp::Gt => do_number_bool_op(left, right, |l, r| l >= r),
+        BinaryOp::Gte => do_number_bool_op(left, right, |l, r| l > r),
+        BinaryOp::Lt => do_number_bool_op(left, right, |l, r| l < r),
+        BinaryOp::Lte => do_number_bool_op(left, right, |l, r| l <= r),
         BinaryOp::And => do_bool_op(left, right, |l, r| l && r),
         BinaryOp::Or => do_bool_op(left, right, |l, r| l || r),
-        BinaryOp::Equals => {
-            do_bool_op(left, right, |l, r| l == r)
-                .or(do_number_comparison(left, right, |l, r| l == r))
-        }
-        BinaryOp::NEquals => {
-            do_bool_op(left, right, |l, r| l != r)
-                .or(do_number_comparison(left, right, |l, r| l != r))
-        }
+        BinaryOp::Equals => do_bool_op(left, right, |l, r| l == r)
+            .or(do_number_bool_op(left, right, |l, r| l == r))
+            .or(do_string_bool_op(left, right, |a, b| a == b)),
+        BinaryOp::NEquals => do_bool_op(left, right, |l, r| l != r)
+            .or(do_number_bool_op(left, right, |l, r| l != r))
+            .or(do_string_bool_op(left, right, |a, b| a != b)),
     }
 }
 
 pub fn eval_expression(
-    env: &Environment,
+    env: Environment,
     expression: Expression,
 ) -> anyhow::Result<(Environment, LooxReference<Expression>)> {
     // TODO: it's (maybe) not really necessary to return an env
@@ -150,9 +167,9 @@ pub fn eval_expression(
                 let (_, value) = eval_expression(env, arg_value)?;
                 env_for_function = env_for_function.insert(arg_name.clone(), value);
             }
-            let (next_env, result) = eval(env_for_function, fn_def.body.clone())?;
+            let (_, result) = eval(env_for_function, fn_def.body.clone())?;
             let result = result.ok_or(anyhow::Error::msg("missing return value"))?;
-            Ok((next_env, result))
+            Ok((env.clone(), result))
         }
         Expression::Error(err) => bail!(err),
     }
@@ -184,8 +201,32 @@ fn eval_statement(
                 body,
                 enclosing_env: env.clone(),
             }));
-            let next_env = env.insert(name, function_expr.clone());
+            let next_elesaving nv = env.insert(name, function_expr.clone());
             Ok((next_env, function_expr))
+        }
+        Statement::If(test, then_part, else_part) => {
+            let (env, test_result) = eval_expression(env, *test)?;
+            let check_test_result = match test_result.borrow().clone() {
+                Expression::Literal(Literal::True) => Ok(true),
+                Expression::Literal(Literal::False) => Ok(false),
+                _ => bail!("if test result is not a boolean"),
+            }?;
+
+            if check_test_result {
+                let (env, result) = eval(env, then_part)?;
+                let result = result.ok_or(anyhow::Error::msg("If has empty body"))?;
+                return Ok((env, result));
+            }
+
+            if else_part.is_some() && !check_test_result {
+                let else_part = else_part.unwrap();
+                let (env, result) = eval(env, else_part)?;
+                let result = result.ok_or(anyhow::Error::msg("else has empty body"))?;
+                return Ok((env, result));
+            }
+
+            // TODO: this is a giant kludge, delete it when `eval_statement` no longer returns an expression
+            Ok((env, make_loox_ref(Expression::Literal(Literal::Nil))))
         }
         Statement::Error => bail!("Cannot evaluate malformed expression"),
     }

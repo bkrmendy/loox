@@ -107,7 +107,7 @@ fn scan_keyword(source: &str, line: usize) -> Option<(Token, &str)> {
 fn scan_string_literal(source: &str, line: usize) -> Option<(usize, Token, &str)> {
     if let Some(rest) = source.strip_prefix('"') {
         let literal: String = rest.chars().take_while(|&c| c != '"').collect();
-        let literal_len = literal.len();
+        let literal_len = literal.len() + 1;
         let newlines_count = literal.match_indices('\n').count();
         let end_line = line + newlines_count;
         let token = Token {
@@ -303,4 +303,55 @@ pub fn scan(mut source: &str) -> anyhow::Result<Vec<Token>> {
     });
 
     Ok(tokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan;
+
+    #[test]
+    fn test_scan_var_with_string() {
+        let src = r###"var a = "hello"; "###;
+        let tokens = scan(src).expect("should be able to scan source");
+        insta::assert_debug_snapshot!(tokens, @r###"
+        [
+            Token {
+                token_type: Var,
+                lexeme: "var",
+                literal: Placeholder,
+                line: 0,
+            },
+            Token {
+                token_type: Identifier,
+                lexeme: "a",
+                literal: Placeholder,
+                line: 0,
+            },
+            Token {
+                token_type: Equal,
+                lexeme: "=",
+                literal: Placeholder,
+                line: 0,
+            },
+            Token {
+                token_type: String,
+                lexeme: "hello",
+                literal: Placeholder,
+                line: 0,
+            },
+            Token {
+                token_type: Semicolon,
+                lexeme: ";",
+                literal: Placeholder,
+                line: 0,
+            },
+            Token {
+                token_type: Eof,
+                lexeme: "",
+                literal: Placeholder,
+                line: 0,
+            },
+        ]
+        "###);
+    }
 }
