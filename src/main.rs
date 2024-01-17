@@ -199,6 +199,17 @@ mod tests {
     }
 
     #[test]
+    fn test_string_concat() {
+        let src = r###"
+        var a = "hello";
+
+        a + "_world"
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""hello_world""###);
+    }
+
+    #[test]
     fn test_variables_boolean_op() {
         let src = r###"
         var a = true;
@@ -376,5 +387,38 @@ mod tests {
         "###;
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""5""###);
+    }
+
+    #[test]
+    fn test_simple_while() {
+        let src = r###"
+        var a = 0
+        while a < 10 {
+            a = a + 1
+        }
+
+        a
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""10""###);
+    }
+
+    #[test]
+    fn test_while_with_string() {
+        let src = r###"
+        fun repeat(str, n) {
+            var start = ""
+            var cnt = 0
+            while cnt < n {
+                start = start + str
+                cnt = cnt + 1
+            }
+            start
+        }
+        
+        repeat("woot ", 3)
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""woot woot woot ""###);
     }
 }

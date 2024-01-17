@@ -9,8 +9,6 @@
 - [ ] add line + column information to tokens and expressions
 
 ### Language features
-- [ ] parse/eval while loops
-
 - [ ] parse/eval objects
 - [ ] make sure only objects have reference semantics
 - [ ] make sure numbers/strings etc have value semantics
@@ -40,6 +38,7 @@
 - [ ] VSCode extension
 
 ### Done
+- [x] parse/eval while loops
 - [x] propagate errors from parsing
 - [x] parse/eval ifs
 - [x] [BUG] recursive functions don't work

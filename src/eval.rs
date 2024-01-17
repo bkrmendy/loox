@@ -44,6 +44,19 @@ fn do_number_op(
     }
 }
 
+fn do_string_op(
+    left: &Expression,
+    right: &Expression,
+    f: fn(&String, &String) -> String,
+) -> anyhow::Result<Expression> {
+    match (left, right) {
+        (Expression::Literal(Literal::String(a)), Expression::Literal(Literal::String(b))) => {
+            Ok(Expression::Literal(Literal::String(f(a, b))))
+        }
+        _ => bail!(format!("not numbers")),
+    }
+}
+
 fn do_number_bool_op(
     left: &Expression,
     right: &Expression,
@@ -108,7 +121,13 @@ fn eval_binary_op(
     right: &Expression,
 ) -> anyhow::Result<Expression> {
     match op {
-        BinaryOp::Plus => do_number_op(left, right, |l, r| l + r),
+        BinaryOp::Plus => {
+            do_number_op(left, right, |l, r| l + r).or(do_string_op(left, right, |a, b| {
+                let mut base = a.clone();
+                base.push_str(b);
+                base
+            }))
+        }
         BinaryOp::Minus => do_number_op(left, right, |l, r| l - r),
         BinaryOp::Times => do_number_op(left, right, |l, r| l * r),
         BinaryOp::Div => do_number_op(left, right, |l, r| l / r),
@@ -238,6 +257,19 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
 
             Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
         }
+        Statement::While(test, body) => loop {
+            let test_result = eval_expression(env.clone(), *test.clone())?;
+            let check_test_result = match test_result.borrow().clone() {
+                Expression::Literal(Literal::True) => Ok(true),
+                Expression::Literal(Literal::False) => Ok(false),
+                _ => bail!("if test result is not a boolean"),
+            }?;
+            if !check_test_result {
+                return Ok(make_loox_ref(Expression::Literal(Literal::Unit)));
+            }
+            let env_for_scope = Rc::new(RefCell::new(env.borrow().clone()));
+            let _ = eval(env_for_scope, body.clone())?;
+        },
         Statement::Error => bail!("Cannot evaluate malformed expression"),
     }
 }

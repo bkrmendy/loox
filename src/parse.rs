@@ -111,6 +111,7 @@ pub enum Statement {
     FreeStandingExpression(Box<Expression>),
     // represent errors
     If(Box<Expression>, Vec<Statement>, Option<Vec<Statement>>),
+    While(Box<Expression>, Vec<Statement>),
     Error,
 }
 
@@ -569,6 +570,42 @@ fn parse_if_statement<'a: 'b, 'b>(
     ))
 }
 
+fn parse_while_statement<'a: 'b, 'b>(
+    errors: &mut Vec<ParseError>,
+    tokens: &'b [Token],
+) -> Option<(Statement, &'b [Token])> {
+    let (_, tokens) = expect_token(tokens, TokenType::While)?;
+    let maybe_test = parse_expression(tokens);
+    if maybe_test.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected identifier"),
+        });
+        let tokens = synchronize(tokens);
+        return Some((Statement::Error, tokens));
+    }
+    let (test, tokens) = maybe_test.unwrap();
+    let (maybe_left_brace, tokens) = expect_maybe_token(tokens, TokenType::LeftBrace);
+    if maybe_left_brace.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected opening brace"),
+        });
+    }
+    let mut tokens = tokens;
+    let mut then_statements: Vec<Statement> = Vec::new();
+    while let Some((statement, rest)) = parse_statement(errors, tokens) {
+        then_statements.push(statement);
+        tokens = rest;
+    }
+    let (maybe_right_brace, tokens) = expect_maybe_token(tokens, TokenType::RightBrace);
+    if maybe_right_brace.is_none() {
+        errors.push(ParseError {
+            message: String::from("expected closing brace"),
+        });
+    }
+
+    Some((Statement::While(Box::new(test), then_statements), tokens))
+}
+
 #[derive(Debug)]
 pub struct ParseError {
     pub message: String,
@@ -580,6 +617,7 @@ fn parse_statement<'a: 'b, 'b>(
 ) -> Option<(Statement, &'b [Token])> {
     parse_var_declaration(errors, tokens)
         .or(parse_if_statement(errors, tokens))
+        .or(parse_while_statement(errors, tokens))
         .or(parse_variable_assignment(tokens))
         .or(parse_expression_statement(tokens))
         .or(parse_function_declaration(errors, tokens))
