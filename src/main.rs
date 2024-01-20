@@ -8,7 +8,6 @@ use rpds::HashTrieMap;
 mod eval;
 mod parse;
 mod scan;
-mod utils;
 
 fn run(env: EnvPtr, source: &str) -> anyhow::Result<Option<LooxReference<Expression>>> {
     let tokens = scan::scan(source)?;
@@ -441,7 +440,7 @@ mod tests {
     //         }
     //         start
     //     }
-        
+
     //     repeat("woot ", 3)
     //     "###;
     //     let result = run_expr_expect_ok(src);
@@ -500,5 +499,22 @@ mod tests {
         "###;
         let result = run_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""22""###);
+    }
+
+    #[test]
+    fn test_closure_aliasing() {
+        let src = r###"
+        var x = "global";
+        fun outer() {
+            var x = "outer";
+            fun inner() {
+                x
+            }
+            inner();
+        }
+        outer()
+        "###;
+        let result = run_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""outer""###);
     }
 }
