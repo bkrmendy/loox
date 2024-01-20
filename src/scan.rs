@@ -1,5 +1,3 @@
-use crate::utils::error;
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     // Single-character tokens.
@@ -56,16 +54,21 @@ pub enum TokenLiteral {
 }
 
 #[derive(Debug, Clone)]
+pub struct SourceRange {
+    pub start: usize, // inclusie
+    pub end: usize,   // exclusive
+}
+
+#[derive(Debug, Clone)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
     pub literal: TokenLiteral,
-    pub line: usize,
+    pub source_location: SourceRange,
 }
 
 enum ScanResult {
     TokenScanned(Token),
-    StringScanned(Token, usize),
     NewLine,
     Whitespace,
     UnexpectedCharacter(char),
@@ -88,37 +91,46 @@ const KEYWORDS: [(&str, TokenType); 13] = [
     ("var", TokenType::Var),
 ];
 
-fn scan_keyword(source: &str, line: usize) -> Option<(Token, &str)> {
+fn scan_keyword(source: &str, source_offset: usize) -> Option<(Token, usize, &str)> {
     let mk_tok = |t: TokenType, lexeme: &str| Token {
         token_type: t,
         lexeme: String::from(lexeme),
         literal: TokenLiteral::Placeholder,
-        line,
+        source_location: SourceRange {
+            start: source_offset,
+            end: source_offset + lexeme.len(),
+        },
     };
 
     for (keyword, keyword_type) in KEYWORDS {
         if let Some(rest) = source.strip_prefix(keyword) {
-            return Some((mk_tok(keyword_type, keyword), rest));
+            return Some((
+                mk_tok(keyword_type, keyword),
+                source_offset + keyword.len(),
+                rest,
+            ));
         }
     }
 
     None
 }
 
-fn scan_string_literal(source: &str, line: usize) -> Option<(usize, Token, &str)> {
+fn scan_string_literal(source: &str, source_offset: usize) -> Option<(Token, usize, &str)> {
     if let Some(rest) = source.strip_prefix('"') {
         let literal: String = rest.chars().take_while(|&c| c != '"').collect();
         let literal_len = literal.len() + 1;
-        let newlines_count = literal.match_indices('\n').count();
-        let end_line = line + newlines_count;
+        let next_offset = source_offset + 1 + literal_len;
         let token = Token {
             token_type: TokenType::String,
             lexeme: literal,
             literal: TokenLiteral::Placeholder,
-            line,
+            source_location: SourceRange {
+                start: source_offset,
+                end: next_offset,
+            },
         };
         let rest = &source[literal_len + 1..];
-        return Some((end_line, token, rest));
+        return Some((token, next_offset, rest));
     }
 
     None
@@ -131,32 +143,43 @@ fn get_while(source: &str, f: fn(char) -> bool) -> (String, &str) {
     (literal, rest)
 }
 
-fn scan_identifier(source: &str, line: usize) -> Option<(Token, &str)> {
+fn scan_identifier(source: &str, source_offset: usize) -> Option<(Token, usize, &str)> {
     let next_char = source.chars().next().unwrap();
     if !next_char.is_alphabetic() {
         return None;
     }
-    let (literal, rest) = get_while(source, |c| c.is_alphanumeric());
+    let (literal, rest) = get_while(source, |c| c.is_alphanumeric() || c == '_');
+    let next_offset = source_offset + literal.len();
     let token = Token {
         token_type: TokenType::Identifier,
         lexeme: literal,
         literal: TokenLiteral::Placeholder,
-        line,
+        source_location: SourceRange {
+            start: source_offset,
+            end: next_offset,
+        },
     };
-    Some((token, rest))
+    Some((token, next_offset, rest))
 }
 
-fn mk_number_token(lexeme: String, line: usize) -> Token {
+fn mk_number_token(lexeme: String, source_offset: usize) -> (Token, usize) {
     let value = lexeme.parse::<f64>().unwrap();
-    Token {
-        token_type: TokenType::Number,
-        lexeme,
-        literal: TokenLiteral::NumberLiteral(value),
-        line,
-    }
+    let next_offset = source_offset + lexeme.len();
+    (
+        Token {
+            token_type: TokenType::Number,
+            lexeme,
+            literal: TokenLiteral::NumberLiteral(value),
+            source_location: SourceRange {
+                start: source_offset,
+                end: next_offset,
+            },
+        },
+        next_offset,
+    )
 }
 
-fn scan_number(source: &str, line: usize) -> Option<(Token, &str)> {
+fn scan_number(source: &str, source_offset: usize) -> Option<(Token, usize, &str)> {
     let next_char = source.chars().next().unwrap();
     if !next_char.is_numeric() {
         return None;
@@ -168,15 +191,15 @@ fn scan_number(source: &str, line: usize) -> Option<(Token, &str)> {
             return None;
         }
         let lexeme = format!("{}.{}", whole_part, fractional_part);
-        let token = mk_number_token(lexeme, line);
-        Some((token, rest))
+        let (token, next_offset) = mk_number_token(lexeme, source_offset);
+        Some((token, next_offset, rest))
     } else {
-        let token = mk_number_token(whole_part, line);
-        Some((token, rest))
+        let (token, next_offset) = mk_number_token(whole_part, source_offset);
+        Some((token, next_offset, rest))
     }
 }
 
-fn scan_token(source: &str, line: usize) -> (ScanResult, &str) {
+fn scan_token(source: &str, source_offset: usize) -> (ScanResult, usize, &str) {
     assert!(!source.is_empty(), "Source should not be empty");
     let next_char = source.chars().next().unwrap();
 
@@ -184,14 +207,20 @@ fn scan_token(source: &str, line: usize) -> (ScanResult, &str) {
         token_type: t,
         lexeme: String::from(next_char),
         literal: TokenLiteral::Placeholder,
-        line,
+        source_location: SourceRange {
+            start: source_offset,
+            end: source_offset + 1,
+        },
     };
 
     let mk_tok = |t: TokenType, lexeme: &str| Token {
         token_type: t,
         lexeme: String::from(lexeme),
         literal: TokenLiteral::Placeholder,
-        line,
+        source_location: SourceRange {
+            start: source_offset,
+            end: source_offset + lexeme.len(),
+        },
     };
 
     let match_char = |c: char| {
@@ -232,6 +261,7 @@ fn scan_token(source: &str, line: usize) -> (ScanResult, &str) {
         let lexeme_length = simple_token.lexeme.len();
         return (
             ScanResult::TokenScanned(simple_token),
+            source_offset + lexeme_length,
             &source[lexeme_length..],
         );
     }
@@ -245,55 +275,57 @@ fn scan_token(source: &str, line: usize) -> (ScanResult, &str) {
     };
 
     if let Some((ws, rest)) = whitespace_token {
-        return (ws, rest);
+        return (ws, source_offset + 1, rest);
     }
 
     if let Some(rest) = source.strip_prefix("//") {
-        let (_, rest_of_line) = get_while(rest, |c| c.is_alphabetic());
-        return (ScanResult::CommentedLine, rest_of_line);
+        let (line, rest_of_line) = get_while(rest, |c| c.is_alphabetic());
+        let next_offset = source_offset + 2 + line.len();
+        return (ScanResult::CommentedLine, next_offset, rest_of_line);
     }
 
     if let Some(rest) = source.strip_prefix('/') {
         let token = mk_single_char_tok(TokenType::Slash);
-        return (ScanResult::TokenScanned(token), rest);
+        return (ScanResult::TokenScanned(token), source_offset + 1, rest);
     }
 
-    if let Some((t, rest)) = scan_keyword(source, line) {
-        return (ScanResult::TokenScanned(t), rest);
+    if let Some((t, next_offset, rest)) = scan_keyword(source, source_offset) {
+        return (ScanResult::TokenScanned(t), next_offset, rest);
     }
 
-    if let Some((next_line, token, rest)) = scan_string_literal(source, line) {
-        return (ScanResult::StringScanned(token, next_line), rest);
+    if let Some((token, next_offset, rest)) = scan_string_literal(source, source_offset) {
+        return (ScanResult::TokenScanned(token), next_offset, rest);
     }
 
-    if let Some((token, rest)) = scan_number(source, line) {
-        return (ScanResult::TokenScanned(token), rest);
+    if let Some((token, next_offset, rest)) = scan_number(source, source_offset) {
+        return (ScanResult::TokenScanned(token), next_offset, rest);
     }
 
-    if let Some((token, rest)) = scan_identifier(source, line) {
-        return (ScanResult::TokenScanned(token), rest);
+    if let Some((token, next_offset, rest)) = scan_identifier(source, source_offset) {
+        return (ScanResult::TokenScanned(token), next_offset, rest);
     }
 
-    (ScanResult::UnexpectedCharacter(next_char), &source[1..])
+    (
+        ScanResult::UnexpectedCharacter(next_char),
+        source_offset + 1,
+        &source[1..],
+    )
 }
 
 pub fn scan(mut source: &str) -> anyhow::Result<Vec<Token>> {
     let mut tokens: Vec<Token> = Vec::new();
-    let mut line: usize = 0;
+    let mut source_offset: usize = 0;
 
     while !source.is_empty() {
-        let (token, rest_of_source) = scan_token(source, line);
+        let (token, next_offset, rest_of_source) = scan_token(source, source_offset);
         match token {
             ScanResult::TokenScanned(t) => tokens.push(t),
-            ScanResult::StringScanned(string, next_line) => {
-                line = next_line;
-                tokens.push(string)
-            }
-            ScanResult::NewLine => line += 1,
+            ScanResult::NewLine => {}
             ScanResult::Whitespace => {}
             ScanResult::CommentedLine => {}
-            ScanResult::UnexpectedCharacter(c) => error(line, format!("Unexpected character {c}")),
+            ScanResult::UnexpectedCharacter(c) => {}
         }
+        source_offset = next_offset;
         source = rest_of_source;
     }
 
@@ -301,7 +333,10 @@ pub fn scan(mut source: &str) -> anyhow::Result<Vec<Token>> {
         token_type: TokenType::Eof,
         lexeme: String::from(""),
         literal: TokenLiteral::Placeholder,
-        line,
+        source_location: SourceRange {
+            start: source_offset,
+            end: source_offset + 1,
+        },
     });
 
     Ok(tokens)
@@ -321,37 +356,55 @@ mod tests {
                 token_type: Var,
                 lexeme: "var",
                 literal: Placeholder,
-                line: 0,
+                source_location: SourceRange {
+                    start: 0,
+                    end: 3,
+                },
             },
             Token {
                 token_type: Identifier,
                 lexeme: "a",
                 literal: Placeholder,
-                line: 0,
+                source_location: SourceRange {
+                    start: 4,
+                    end: 5,
+                },
             },
             Token {
                 token_type: Equal,
                 lexeme: "=",
                 literal: Placeholder,
-                line: 0,
+                source_location: SourceRange {
+                    start: 6,
+                    end: 7,
+                },
             },
             Token {
                 token_type: String,
                 lexeme: "hello",
                 literal: Placeholder,
-                line: 0,
+                source_location: SourceRange {
+                    start: 8,
+                    end: 15,
+                },
             },
             Token {
                 token_type: Semicolon,
                 lexeme: ";",
                 literal: Placeholder,
-                line: 0,
+                source_location: SourceRange {
+                    start: 15,
+                    end: 16,
+                },
             },
             Token {
                 token_type: Eof,
                 lexeme: "",
                 literal: Placeholder,
-                line: 0,
+                source_location: SourceRange {
+                    start: 17,
+                    end: 18,
+                },
             },
         ]
         "###);
