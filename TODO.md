@@ -1,12 +1,11 @@
 ## Goals and Ambitions
 
 ### Correctness
-- [ ] expression evaluation shouldn't return a new env
 - [ ] statement evaluation shouldn't return an expression (+ solve the testing/repl printing problem)
 
 ### Infrastructure
 - [ ] implement synchronization and error signaling for all statements and expressions
-- [ ] add line + column information to tokens and expressions
+- [ ] add source location information to expressions and statements
 - [ ] create a sep_by function for parameter lists and object literals
 
 ### Language features
@@ -14,7 +13,7 @@
 - [ ] parse/eval chained if/else if/else
 
 - [ ] add support for function literals
-- [ ] add support for return statements and clarify trailing statement
+- [ ] add support for return statements and clarify the trailing statement question
 
 ### VM
 - [ ] implement the compiler
@@ -35,6 +34,8 @@
 - [ ] VSCode extension
 
 ### Done
+- [x] add source location information to tokens
+- [x] expression evaluation shouldn't return a new env
 - [x] make sure only objects have reference semantics
 - [x] make sure numbers/strings etc have value semantics
 - [x] parse/eval objects
