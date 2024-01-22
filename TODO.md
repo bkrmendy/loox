@@ -5,7 +5,6 @@
 
 ### Infrastructure
 - [ ] implement synchronization and error signaling for all statements and expressions
-- [ ] add source location information to expressions and statements
 - [ ] create a sep_by function for parameter lists and object literals
 
 ### Language features
@@ -20,7 +19,7 @@
 - [ ] implement the bytecode interpreter
 
 ### Standard library
-- [ ] print, read from terminal, file
+- [ ] read from terminal, file
 - [ ] built-in arrays + functions
 - [ ] built-in hashmap + functions
 
@@ -34,6 +33,8 @@
 - [ ] VSCode extension
 
 ### Done
+- [x] add source location information to expressions and statements
+- [x] print to terminal
 - [x] add source location information to tokens
 - [x] expression evaluation shouldn't return a new env
 - [x] make sure only objects have reference semantics
