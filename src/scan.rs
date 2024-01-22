@@ -38,7 +38,6 @@ pub enum TokenType {
     IF,
     Nil,
     Or,
-    Print,
     Return,
     True,
     Var,
@@ -59,6 +58,19 @@ pub struct SourceRange {
     pub end: usize,   // exclusive
 }
 
+impl SourceRange {
+    pub fn new(start: usize, end: usize) -> Self {
+        SourceRange { start, end }
+    }
+
+    pub fn after(&self) -> SourceRange {
+        SourceRange {
+            start: self.end,
+            end: self.end + 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Token {
     pub token_type: TokenType,
@@ -75,7 +87,7 @@ enum ScanResult {
     CommentedLine,
 }
 
-const KEYWORDS: [(&str, TokenType); 13] = [
+const KEYWORDS: [(&str, TokenType); 12] = [
     ("and", TokenType::And),
     ("or", TokenType::Or),
     ("true", TokenType::True),
@@ -86,7 +98,6 @@ const KEYWORDS: [(&str, TokenType); 13] = [
     ("else", TokenType::Else),
     ("fun", TokenType::Fun),
     ("nil", TokenType::Nil),
-    ("print", TokenType::Print),
     ("return", TokenType::Return),
     ("var", TokenType::Var),
 ];
@@ -323,7 +334,7 @@ pub fn scan(mut source: &str) -> anyhow::Result<Vec<Token>> {
             ScanResult::NewLine => {}
             ScanResult::Whitespace => {}
             ScanResult::CommentedLine => {}
-            ScanResult::UnexpectedCharacter(c) => {}
+            ScanResult::UnexpectedCharacter(_) => {}
         }
         source_offset = next_offset;
         source = rest_of_source;

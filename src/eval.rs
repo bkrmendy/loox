@@ -4,8 +4,8 @@ use anyhow::{bail, Ok};
 use rpds::HashTrieMap;
 
 use crate::parse::{
-    BinaryOp, Expression, FunctionDeclarationSyntax, FunctionLiteralSyntax, Literal, Statement,
-    UnaryOp,
+    BinaryOp, Expression, ExpressionAst, FunctionDeclarationSyntax, FunctionLiteralSyntax, Literal,
+    Statement, StatementAst, UnaryOp,
 };
 
 pub type LooxReference<T> = Rc<RefCell<T>>;
@@ -146,12 +146,41 @@ fn eval_binary_op(
     }
 }
 
-pub fn eval_expression(
+fn eval_builtin_expression(
+    name: &str,
+    args: Vec<ExpressionAst>,
     env: EnvPtr,
-    expression: Expression,
+) -> anyhow::Result<LooxReference<Expression>> {
+    match name {
+        "print" => {
+            for arg in args {
+                match eval_expression(env.clone(), arg) {
+                    std::result::Result::Ok(expr) => print!("{}", expr.borrow()),
+                    Err(e) => bail!(e),
+                }
+            }
+            anyhow::Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
+        }
+        "println" => {
+            for arg in args {
+                match eval_expression(env.clone(), arg) {
+                    std::result::Result::Ok(expr) => print!("{}", expr.borrow()),
+                    Err(e) => bail!(e),
+                }
+            }
+            println!();
+            anyhow::Ok(make_loox_ref(Expression::Literal(Literal::Unit)))
+        }
+        _ => bail!(format!("{name} is not a built-in function")),
+    }
+}
+
+fn eval_expression(
+    env: EnvPtr,
+    expression: ExpressionAst,
 ) -> anyhow::Result<LooxReference<Expression>> {
     // TODO: it's (maybe) not really necessary to return an env
-    match expression {
+    match expression.expression {
         Expression::Literal(Literal::Identifier(name)) => {
             let env_for_lookup = env.borrow();
             let value = env_for_lookup
@@ -159,7 +188,7 @@ pub fn eval_expression(
                 .ok_or(anyhow::Error::msg(format!("Cannot find variable: {name}")))?;
             Ok(value.clone())
         }
-        Expression::Literal(_) => Ok(make_loox_ref(expression)),
+        Expression::Literal(_) => Ok(make_loox_ref(expression.expression)),
         Expression::Grouping(expr) => eval_expression(env, *expr),
         Expression::Unary(op, expr) => {
             let e = eval_expression(env, *expr)?;
@@ -174,6 +203,11 @@ pub fn eval_expression(
         }
         Expression::FunctionLiteral(_) => todo!(),
         Expression::FunctionCall(name, args) => {
+            if let std::result::Result::Ok(result) =
+                eval_builtin_expression(&name, args.clone(), env.clone())
+            {
+                return Ok(result);
+            }
             let fn_def = {
                 let env_for_lookup = env.borrow();
                 env_for_lookup
@@ -221,9 +255,12 @@ pub fn eval_expression(
     }
 }
 
-fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxReference<Expression>> {
+fn eval_statement(
+    env: EnvPtr,
+    statement: StatementAst,
+) -> anyhow::Result<LooxReference<Expression>> {
     // TODO: returing the expression (maybe) is not necessary
-    match statement {
+    match statement.statement {
         Statement::VariableDeclaration(name, expr) => {
             let val = eval_expression(env.clone(), *expr)?;
             let has_value_semantics = match val.borrow().clone() {
@@ -335,7 +372,7 @@ fn eval_statement(env: EnvPtr, statement: Statement) -> anyhow::Result<LooxRefer
 
 pub fn eval(
     env: EnvPtr,
-    statements: Vec<Statement>,
+    statements: Vec<StatementAst>,
 ) -> anyhow::Result<Option<LooxReference<Expression>>> {
     let mut last_result: Option<LooxReference<Expression>> = None;
 

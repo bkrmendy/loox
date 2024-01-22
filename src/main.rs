@@ -7,22 +7,29 @@ use rpds::HashTrieMap;
 
 mod eval;
 mod parse;
+mod report_errors;
 mod scan;
 
 fn run(env: EnvPtr, source: &str) -> anyhow::Result<Option<LooxReference<Expression>>> {
     let tokens = scan::scan(source)?;
-    let (ast, errors) = parse::parse(&tokens);
-    println!("#ast# {:?}", ast);
-    if !errors.is_empty() {
-        bail!(format!("{:?}", errors));
+    let (ast, messages) = parse::parse(&tokens);
+    if !messages.errors.is_empty() {
+        bail!(format!("{:?}", messages));
     }
     eval::eval(env, ast)
 }
 
-fn run_file(path: &str) -> anyhow::Result<()> {
-    let contents = std::fs::read_to_string(path)?;
+fn run_file(file_path: &str) -> anyhow::Result<()> {
+    let contents = std::fs::read_to_string(file_path)?;
+    let tokens = scan::scan(&contents)?;
+    let (ast, messages) = parse::parse(&tokens);
+    report_errors::report_errors(&messages, file_path)?;
+
+    if !messages.errors.is_empty() {
+        return Ok(());
+    }
     let env: EnvPtr = Rc::new(RefCell::new(HashTrieMap::new()));
-    let _ = run(env, &contents);
+    let _ = eval::eval(env, ast)?;
     Ok(())
 }
 
@@ -97,7 +104,7 @@ mod tests {
     fn test_incomplete_input() {
         let src = "1 +";
         let result = run_expr_expect_err(src);
-        insta::assert_debug_snapshot!(result, @r###""[ParseError { message: \"Expected operand\" }]""###);
+        insta::assert_debug_snapshot!(result, @r###""Messages { warnings: [], errors: [Message { level: Error, location: SourceRange { start: 3, end: 4 }, message: \"Expected operand\" }] }""###);
     }
 
     #[test]
@@ -295,7 +302,7 @@ mod tests {
     fn test_string_variable_copy_semantics() {
         let src = r###"
         var a = "hello";
-        var b = "abc"
+        var b = "abc";
         b = a;
         b
         "###;
@@ -307,7 +314,7 @@ mod tests {
     fn test_string_variable_value_semantics() {
         let src = r###"
         var a = "hello";
-        var b = "abc"
+        var b = "abc";
         b = a;
         a = "not hello anymore";
         a != b
@@ -326,7 +333,7 @@ mod tests {
             add
         }
 
-        var add2 = adder(2)
+        var add2 = adder(2);
         add2(3)
         "###;
         let result = run_expr_expect_ok(src);
@@ -493,7 +500,7 @@ mod tests {
     fn test_property_access_pointer() {
         let src = r###"
         var a = { hello: 12, there: 2 };
-        var b = a
+        var b = a;
         a.there = 22;
         b.there
         "###;

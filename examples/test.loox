@@ -1,0 +1,16 @@
+var a = 2
+if a > 2 {
+    println(a + 2)
+}
+
+var a = 2;
+while a < 10 {
+    a = a + 1;
+    println(a)
+}
+
+fun hello(recipient) {
+    print("world");
+}
+
+hello()
