@@ -99,6 +99,17 @@ mod tests {
         format!("{result}")
     }
 
+    fn compile_and_run(source: &str) -> Machine {
+        let tokens = scan::scan(source).unwrap();
+        let (ast, _) = parse(&tokens);
+        let mut compiler = Compiler::new();
+        compile_program(&mut compiler, &ast);
+        let program = compiler.finish();
+        let mut machine = Machine::new(program);
+        machine.run();
+        machine
+    }
+
     #[test]
     fn test_add_expression() {
         let src = "1 + 2";
@@ -109,13 +120,7 @@ mod tests {
     #[test]
     fn test_add_expression_compile_run() {
         let src = "1 + 2";
-        let tokens = scan::scan(src).unwrap();
-        let (ast, _) = parse(&tokens);
-        let mut compiler = Compiler::new();
-        compile_program(&mut compiler, &ast);
-        let program = compiler.finish();
-        let mut machine = Machine::new(program);
-        machine.run();
+        let machine = compile_and_run(src);
         insta::assert_debug_snapshot!(machine.peek_stack_top().unwrap(), @r###"
         ImmediateNumber(
             3.0,
@@ -135,6 +140,17 @@ mod tests {
         let src = "1 + 2 * 4";
         let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""9""###);
+    }
+
+    #[test]
+    fn test_precedences_vm() {
+        let src = "1 + 2 * 4";
+        let machine = compile_and_run(src);
+        insta::assert_debug_snapshot!(machine.peek_stack_top().unwrap(), @r###"
+        ImmediateNumber(
+            9.0,
+        )
+        "###);
     }
 
     #[test]
@@ -159,6 +175,17 @@ mod tests {
     }
 
     #[test]
+    fn test_precedences_long_vm() {
+        let src = "1 + 1 + 2 * 4 + 5 * 6 + 7 * 2 * 2";
+        let machine = compile_and_run(src);
+        insta::assert_debug_snapshot!(machine.peek_stack_top().unwrap(), @r###"
+        ImmediateNumber(
+            68.0,
+        )
+        "###);
+    }
+
+    #[test]
     fn test_boolean() {
         let src = "true and false";
         let result = eval_expr_expect_ok(src);
@@ -166,10 +193,32 @@ mod tests {
     }
 
     #[test]
+    fn test_boolean_vm() {
+        let src = "true and false";
+        let machine = compile_and_run(src);
+        insta::assert_debug_snapshot!(machine.peek_stack_top().unwrap(), @r###"
+        ImmediateBoolean(
+            false,
+        )
+        "###);
+    }
+
+    #[test]
     fn test_boolean_with_grouping() {
         let src = "(true and false) or (false or true)";
         let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
+    }
+
+    #[test]
+    fn test_boolean_with_grouping_vm() {
+        let src = "(true and false) or (false or true)";
+        let machine = compile_and_run(src);
+        insta::assert_debug_snapshot!(machine.peek_stack_top().unwrap(), @r###"
+        ImmediateBoolean(
+            true,
+        )
+        "###);
     }
 
     #[test]

@@ -18,6 +18,8 @@ fn compile_statement(compiler: &mut Compiler, statement: &StatementAst) {
 fn compile_literal(compiler: &mut Compiler, literal: &Literal) {
     match &literal {
         Literal::Number(number) => compiler.push_immediate_number(*number),
+        Literal::False => compiler.push_boolean(false),
+        Literal::True => compiler.push_boolean(true),
         _ => todo!(),
     }
 }
@@ -29,6 +31,7 @@ fn compile_expression(compiler: &mut Compiler, expression: &ExpressionAst) {
             compile_expression(compiler, right);
             compiler.binary_op(operator);
         }
+        Expression::Grouping(expr) => compile_expression(compiler, expr),
         Expression::Literal(literal) => compile_literal(compiler, literal),
         _ => todo!(),
     }
