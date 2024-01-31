@@ -1,7 +1,9 @@
 ## Goals and Ambitions
 
 ### Correctness
-- [ ] statement evaluation shouldn't return an expression (+ solve the testing/repl printing problem)
+- [ ] statement evaluation (maybe) shouldn't return an expression (+ solve the testing/repl printing problem)
+- [ ] add support for return statements and clarify the trailing statement question
+- [ ] return from if/else 
 
 ### Infrastructure
 - [ ] implement synchronization and error signaling for all statements and expressions
@@ -10,11 +12,13 @@
 ### Language features
 - [ ] parse/eval scopes
 - [ ] parse/eval chained if/else if/else
-
 - [ ] add support for function literals
-- [ ] add support for return statements and clarify the trailing statement question
 
 ### VM
+Support for compiling and running the following
+- [ ] expressions, except function calls, function literals and prop accesses
+- [ ] variable declarations and accesses
+- [ ] add support for variable decl
 - [ ] implement the compiler
 - [ ] implement the bytecode interpreter
 

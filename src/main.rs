@@ -9,6 +9,7 @@ mod eval;
 mod parse;
 mod report_errors;
 mod scan;
+mod vm;
 
 fn run(env: EnvPtr, source: &str) -> anyhow::Result<Option<LooxReference<Expression>>> {
     let tokens = scan::scan(source)?;
@@ -78,16 +79,21 @@ mod tests {
 
     use rpds::HashTrieMap;
 
-    use crate::{eval::EnvPtr, run};
+    use crate::{
+        eval::EnvPtr,
+        parse::parse,
+        run, scan,
+        vm::{compile::compile_program, compiler::Compiler, machine::Machine},
+    };
 
-    fn run_expr_expect_ok(source: &str) -> String {
+    fn eval_expr_expect_ok(source: &str) -> String {
         let env: EnvPtr = Rc::new(RefCell::new(HashTrieMap::new()));
         let result = run(env, source).expect("expected to be OK");
         let expr = result.expect("Expected at least one expression");
         format!("{}", expr.borrow())
     }
 
-    fn run_expr_expect_err(source: &str) -> String {
+    fn eval_expr_expect_err(source: &str) -> String {
         let env: EnvPtr = Rc::new(RefCell::new(HashTrieMap::new()));
         let result = run(env, source).unwrap_err();
         format!("{result}")
@@ -96,84 +102,101 @@ mod tests {
     #[test]
     fn test_add_expression() {
         let src = "1 + 2";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""3""###);
+    }
+
+    #[test]
+    fn test_add_expression_compile_run() {
+        let src = "1 + 2";
+        let tokens = scan::scan(src).unwrap();
+        let (ast, _) = parse(&tokens);
+        let mut compiler = Compiler::new();
+        compile_program(&mut compiler, &ast);
+        let program = compiler.finish();
+        let mut machine = Machine::new(program);
+        machine.run();
+        insta::assert_debug_snapshot!(machine.peek_stack_top().unwrap(), @r###"
+        ImmediateNumber(
+            3.0,
+        )
+        "###);
     }
 
     #[test]
     fn test_incomplete_input() {
         let src = "1 +";
-        let result = run_expr_expect_err(src);
+        let result = eval_expr_expect_err(src);
         insta::assert_debug_snapshot!(result, @r###""Messages { warnings: [], errors: [Message { level: Error, location: SourceRange { start: 3, end: 4 }, message: \"Expected operand\" }] }""###);
     }
 
     #[test]
     fn test_precedences() {
         let src = "1 + 2 * 4";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""9""###);
     }
 
     #[test]
     fn test_add_unary() {
         let src = "1 + -2";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""-1""###);
     }
 
     #[test]
     fn test_precedences_3() {
         let src = "1 + 2 * 4 + 1";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""10""###);
     }
 
     #[test]
     fn test_precedences_long() {
         let src = "1 + 1 + 2 * 4 + 5 * 6 + 7 * 2 * 2";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""68""###);
     }
 
     #[test]
     fn test_boolean() {
         let src = "true and false";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
     #[test]
     fn test_boolean_with_grouping() {
         let src = "(true and false) or (false or true)";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 
     #[test]
     fn test_boolean_with_grouping_with_eq() {
         let src = "(true and false) == (false or true)";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
     #[test]
     fn test_number_eq() {
         let src = "5 == 3";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
     #[test]
     fn test_number_gt() {
         let src = "5 > 3";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 
     #[test]
     fn test_number_gte() {
         let src = "111 <= 111";
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 
@@ -182,7 +205,7 @@ mod tests {
         let src = r###"
         var a = 3;
         a"###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""3""###);
     }
 
@@ -191,7 +214,7 @@ mod tests {
         let src = r###"
         var a = 3;
         a + 4"###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""7""###);
     }
 
@@ -201,7 +224,7 @@ mod tests {
         var a = "hello";
         a
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""hello""###);
     }
 
@@ -212,7 +235,7 @@ mod tests {
 
         a + "_world"
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""hello_world""###);
     }
 
@@ -222,7 +245,7 @@ mod tests {
         var a = true;
         var b = false;
         a and b"###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
@@ -234,7 +257,7 @@ mod tests {
         }
         add(11, 22)
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""33""###);
     }
 
@@ -247,7 +270,7 @@ mod tests {
         }
         add3(22)
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""25""###);
     }
 
@@ -260,7 +283,7 @@ mod tests {
         }
         add3(22) + 2
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""27""###);
     }
 
@@ -271,7 +294,7 @@ mod tests {
         a = 2;
         a
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""2""###);
     }
 
@@ -282,7 +305,7 @@ mod tests {
         var b = a;
         a == b
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 
@@ -294,7 +317,7 @@ mod tests {
         a = 2;
         a != b
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 
@@ -306,7 +329,7 @@ mod tests {
         b = a;
         b
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""hello""###);
     }
 
@@ -319,7 +342,7 @@ mod tests {
         a = "not hello anymore";
         a != b
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""true""###);
     }
 
@@ -336,7 +359,7 @@ mod tests {
         var add2 = adder(2);
         add2(3)
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""5""###);
     }
 
@@ -350,7 +373,7 @@ mod tests {
 
         a
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""0""###);
     }
 
@@ -366,7 +389,7 @@ mod tests {
 
         a
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""10""###);
     }
 
@@ -383,7 +406,7 @@ mod tests {
 
         min(2, 7)
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""2""###);
     }
 
@@ -400,7 +423,7 @@ mod tests {
 
         greet(true) == greet(false)
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""false""###);
     }
 
@@ -417,7 +440,7 @@ mod tests {
 
         fib(5)
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""5""###);
     }
 
@@ -431,28 +454,28 @@ mod tests {
 
         a
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""10""###);
     }
 
-    // #[test]
-    // fn test_while_with_string() {
-    //     let src = r###"
-    //     fun repeat(str, n) {
-    //         var start = "";
-    //         var cnt = 0;
-    //         while cnt < n {
-    //             start = start + str;
-    //             cnt = cnt + 1;
-    //         }
-    //         start
-    //     }
+    #[test]
+    fn test_while_with_string() {
+        let src = r###"
+        fun repeat(str, n) {
+            var start = "";
+            var cnt = 0;
+            while cnt < n {
+                start = start + str;
+                cnt = cnt + 1;
+            }
+            start
+        }
 
-    //     repeat("woot ", 3)
-    //     "###;
-    //     let result = run_expr_expect_ok(src);
-    //     insta::assert_debug_snapshot!(result, @r###""woot woot woot ""###);
-    // }
+        repeat("woot ", 3)
+        "###;
+        let result = eval_expr_expect_ok(src);
+        insta::assert_debug_snapshot!(result, @r###""woot woot woot ""###);
+    }
 
     #[test]
     fn test_object_literal() {
@@ -460,7 +483,7 @@ mod tests {
         var a = { hello: 12, world: "aaa" };
         a
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""{hello: 12, world: aaa}""###);
     }
 
@@ -470,7 +493,7 @@ mod tests {
         var a = { hello: 12, world: "aaa" };
         a.hello
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""12""###);
     }
 
@@ -481,7 +504,7 @@ mod tests {
         fun double(n) { n * 2 }
         a.there + double(a.hello)
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""26""###);
     }
 
@@ -492,7 +515,7 @@ mod tests {
         a.there = 22;
         a.there
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""22""###);
     }
 
@@ -504,7 +527,7 @@ mod tests {
         a.there = 22;
         b.there
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""22""###);
     }
 
@@ -521,7 +544,7 @@ mod tests {
         }
         outer()
         "###;
-        let result = run_expr_expect_ok(src);
+        let result = eval_expr_expect_ok(src);
         insta::assert_debug_snapshot!(result, @r###""outer""###);
     }
 }
