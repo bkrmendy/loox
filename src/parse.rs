@@ -640,7 +640,11 @@ fn parse_var_declaration<'a: 'b, 'b>(
         ));
     }
     let identifier = identifier.unwrap();
-    let (_, tokens) = expect_maybe_token(tokens, TokenType::Equal);
+    let (maybe_equal_token, tokens) = expect_maybe_token(tokens, TokenType::Equal);
+    if maybe_equal_token.is_none() {
+        let location = identifier.source_location.after();
+        messages.error("Expected identifier", &location);
+    }
     let expr = parse_expression(messages, tokens);
     if expr.is_none() {
         let location = SourceRange::new(
