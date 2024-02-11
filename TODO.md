@@ -16,6 +16,7 @@
 
 ### VM
 Support for compiling and running the following
+- [ ] compile unary expressions
 - [ ] expressions, except function calls, function literals and prop accesses
 - [ ] variable declarations and accesses
 - [ ] add support for variable decl
